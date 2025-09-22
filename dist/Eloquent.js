@@ -457,24 +457,72 @@ class QueryBuilder {
             this.withRelations = [];
         if (!this.withCallbacks)
             this.withCallbacks = {};
+        if (!this.withColumns)
+            this.withColumns = {};
         if (typeof relations === 'string') {
-            this.withRelations.push(relations);
+            const parsed = this.parseRelationWithColumns(relations);
+            this.withRelations.push(parsed.relation);
+            if (parsed.columns)
+                this.withColumns[parsed.relation] = parsed.columns;
             if (callback)
-                this.withCallbacks[relations] = callback;
+                this.withCallbacks[parsed.relation] = callback;
         }
         else if (Array.isArray(relations)) {
             for (const name of relations) {
-                this.withRelations.push(name);
+                const parsed = this.parseRelationWithColumns(name);
+                this.withRelations.push(parsed.relation);
+                if (parsed.columns)
+                    this.withColumns[parsed.relation] = parsed.columns;
             }
         }
         else if (relations && typeof relations === 'object') {
-            for (const [name, cb] of Object.entries(relations)) {
+            for (const [name, value] of Object.entries(relations)) {
                 this.withRelations.push(name);
-                if (cb)
-                    this.withCallbacks[name] = cb;
+                if (Array.isArray(value)) {
+                    this.withColumns[name] = value;
+                }
+                else if (typeof value === 'function') {
+                    this.withCallbacks[name] = value;
+                }
             }
         }
         return this;
+    }
+    parseRelationWithColumns(relation) {
+        const colonIndex = relation.indexOf(':');
+        if (colonIndex === -1) {
+            return { relation };
+        }
+        const relName = relation.substring(0, colonIndex);
+        const columnsStr = relation.substring(colonIndex + 1);
+        const columns = columnsStr.split(',').map(col => col.trim()).filter(col => col.length > 0);
+        return { relation: relName, columns };
+    }
+    withWhereHas(relation, callback) {
+        // withWhereHas both constrains the query and eager loads the relation
+        this.whereHas(relation, callback);
+        return this.with(relation, callback);
+    }
+    without(relations) {
+        if (!this.withRelations)
+            return this;
+        const relationsToRemove = Array.isArray(relations) ? relations : [relations];
+        this.withRelations = this.withRelations.filter(rel => !relationsToRemove.includes(rel));
+        // Also remove from callbacks and columns
+        for (const rel of relationsToRemove) {
+            if (this.withCallbacks)
+                delete this.withCallbacks[rel];
+            if (this.withColumns)
+                delete this.withColumns[rel];
+        }
+        return this;
+    }
+    withOnly(relations) {
+        // Clear existing relations and set only the specified ones
+        this.withRelations = [];
+        this.withCallbacks = {};
+        this.withColumns = {};
+        return this.with(relations);
     }
     withTrashed() {
         this.trashedMode = 'with';
@@ -523,6 +571,7 @@ class QueryBuilder {
         cloned.havingConditions = this.havingConditions ? JSON.parse(JSON.stringify(this.havingConditions)) : [];
         cloned.withRelations = this.withRelations ? [...this.withRelations] : [];
         cloned.withCallbacks = this.withCallbacks ? { ...this.withCallbacks } : undefined;
+        cloned.withColumns = this.withColumns ? { ...this.withColumns } : undefined;
         cloned.trashedMode = this.trashedMode;
         cloned.selectBindings = this.selectBindings ? [...this.selectBindings] : [];
         cloned.pivotConfig = this.pivotConfig
@@ -1284,7 +1333,13 @@ class Eloquent {
         return new ThroughBuilder(this, relationship);
     }
     static query() {
-        return new QueryBuilder(this);
+        const qb = new QueryBuilder(this);
+        // Apply default eager loading if defined
+        const defaultWith = this.with;
+        if (defaultWith && Array.isArray(defaultWith) && defaultWith.length > 0) {
+            qb.with(defaultWith);
+        }
+        return qb;
     }
     toJSON() {
         const hidden = this.constructor.hidden || [];
@@ -1302,9 +1357,59 @@ class Eloquent {
         }
         return out;
     }
+    static async load(instances, relations) {
+        if (instances.length === 0)
+            return;
+        const model = instances[0].constructor;
+        const qb = model.query();
+        // Apply the relations to the query builder
+        qb.with(relations);
+        // Load the relations by calling get() on a query that matches the instances
+        // This is a simplified approach - get all instances with relations loaded
+        const ids = instances.map(inst => inst.id).filter(id => id !== null && id !== undefined);
+        if (ids.length === 0)
+            return;
+        const loadedInstances = await model.query().with(relations).whereIn('id', ids).get();
+        // Create a map of loaded instances by ID
+        const loadedMap = new Map(loadedInstances.map(inst => [inst.id, inst]));
+        // Copy relations from loaded instances to original instances
+        for (const instance of instances) {
+            const loaded = loadedMap.get(instance.id);
+            if (loaded && loaded.__relations) {
+                instance.__relations = { ...instance.__relations, ...loaded.__relations };
+            }
+        }
+    }
+    static async loadMissing(instances, relations) {
+        if (instances.length === 0)
+            return;
+        // Parse relations to get relation names
+        const relationNames = this.parseRelationNames(relations);
+        // Filter instances that don't have the relations loaded
+        const instancesToLoad = instances.filter(inst => {
+            const rels = inst.__relations || {};
+            return relationNames.some(name => !(name in rels));
+        });
+        if (instancesToLoad.length === 0)
+            return;
+        await this.load(instancesToLoad, relations);
+    }
+    static parseRelationNames(relations) {
+        if (typeof relations === 'string') {
+            return [relations.split(':')[0]];
+        }
+        else if (Array.isArray(relations)) {
+            return relations.map(r => r.split(':')[0]);
+        }
+        else if (relations && typeof relations === 'object') {
+            return Object.keys(relations);
+        }
+        return [];
+    }
 }
 Eloquent.fillable = [];
 Eloquent.hidden = [];
+Eloquent.with = [];
 Eloquent.connection = null;
 Eloquent.morphMap = {};
 export default Eloquent;

@@ -33,6 +33,7 @@ declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
     private havingConditions;
     private withRelations?;
     private withCallbacks?;
+    private withColumns?;
     private static readonly IN_CHUNK_SIZE;
     private trashedMode;
     private selectBindings;
@@ -106,7 +107,11 @@ declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
     withCount(relations: string | string[] | Record<string, (query: QueryBuilder) => void>): this;
     private buildCountSubquery;
     private buildHasSubquery;
-    with(relations: string | string[] | Record<string, (query: QueryBuilder<any>) => void>, callback?: (query: QueryBuilder<any>) => void): this;
+    with(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>, callback?: (query: QueryBuilder<any>) => void): this;
+    private parseRelationWithColumns;
+    withWhereHas(relation: string, callback?: (query: QueryBuilder) => void): this;
+    without(relations: string | string[]): this;
+    withOnly(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): this;
     withTrashed(): this;
     onlyTrashed(): this;
     withoutTrashed(): this;
@@ -140,6 +145,7 @@ declare class Eloquent {
     protected static table?: string;
     protected static fillable: string[];
     protected static hidden: string[];
+    protected static with: string[];
     static connection: any;
     private static morphMap;
     static raw(value: string): string;
@@ -171,6 +177,9 @@ declare class Eloquent {
     static query<T extends typeof Eloquent>(this: T): QueryBuilder<T>;
     static schema?: z.ZodTypeAny;
     toJSON(): any;
+    static load(instances: Eloquent[], relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<void>;
+    static loadMissing(instances: Eloquent[], relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<void>;
+    private static parseRelationNames;
 }
 export default Eloquent;
 //# sourceMappingURL=Eloquent.d.ts.map

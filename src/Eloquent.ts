@@ -38,6 +38,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
     private havingConditions: Condition[] = [];
     private withRelations?: string[];
     private withCallbacks?: Record<string, (query: QueryBuilder<any>) => void>;
+    private withColumns?: Record<string, string[]>;
     private static readonly IN_CHUNK_SIZE = 1000;
     private trashedMode: 'default' | 'with' | 'only' = 'default';
     private selectBindings: any[] = [];
@@ -542,23 +543,74 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
         return { sql, params };
     }
 
-    with(relations: string | string[] | Record<string, (query: QueryBuilder<any>) => void>, callback?: (query: QueryBuilder<any>) => void): this {
+    with(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>, callback?: (query: QueryBuilder<any>) => void): this {
         if (!this.withRelations) this.withRelations = [];
         if (!this.withCallbacks) this.withCallbacks = {};
+        if (!this.withColumns) this.withColumns = {};
+
         if (typeof relations === 'string') {
-            this.withRelations.push(relations);
-            if (callback) this.withCallbacks[relations] = callback;
+            const parsed = this.parseRelationWithColumns(relations);
+            this.withRelations.push(parsed.relation);
+            if (parsed.columns) this.withColumns[parsed.relation] = parsed.columns;
+            if (callback) this.withCallbacks[parsed.relation] = callback;
         } else if (Array.isArray(relations)) {
             for (const name of relations as string[]) {
-                this.withRelations.push(name);
+                const parsed = this.parseRelationWithColumns(name);
+                this.withRelations.push(parsed.relation);
+                if (parsed.columns) this.withColumns[parsed.relation] = parsed.columns;
             }
         } else if (relations && typeof relations === 'object') {
-            for (const [name, cb] of Object.entries(relations as Record<string, (q: QueryBuilder<any>) => void>)) {
+            for (const [name, value] of Object.entries(relations as Record<string, string[] | ((q: QueryBuilder<any>) => void)>)) {
                 this.withRelations.push(name);
-                if (cb) this.withCallbacks[name] = cb;
+                if (Array.isArray(value)) {
+                    this.withColumns[name] = value;
+                } else if (typeof value === 'function') {
+                    this.withCallbacks[name] = value;
+                }
             }
         }
         return this;
+    }
+
+    private parseRelationWithColumns(relation: string): { relation: string, columns?: string[] } {
+        const colonIndex = relation.indexOf(':');
+        if (colonIndex === -1) {
+            return { relation };
+        }
+        const relName = relation.substring(0, colonIndex);
+        const columnsStr = relation.substring(colonIndex + 1);
+        const columns = columnsStr.split(',').map(col => col.trim()).filter(col => col.length > 0);
+        return { relation: relName, columns };
+    }
+
+    withWhereHas(relation: string, callback?: (query: QueryBuilder) => void): this {
+        // withWhereHas both constrains the query and eager loads the relation
+        this.whereHas(relation, callback);
+        return this.with(relation, callback);
+    }
+
+    without(relations: string | string[]): this {
+        if (!this.withRelations) return this;
+
+        const relationsToRemove = Array.isArray(relations) ? relations : [relations];
+        this.withRelations = this.withRelations.filter(rel => !relationsToRemove.includes(rel));
+
+        // Also remove from callbacks and columns
+        for (const rel of relationsToRemove) {
+            if (this.withCallbacks) delete this.withCallbacks[rel];
+            if (this.withColumns) delete this.withColumns[rel];
+        }
+
+        return this;
+    }
+
+    withOnly(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): this {
+        // Clear existing relations and set only the specified ones
+        this.withRelations = [];
+        this.withCallbacks = {};
+        this.withColumns = {};
+
+        return this.with(relations);
     }
 
     withTrashed(): this {
@@ -619,6 +671,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
         cloned.havingConditions = this.havingConditions ? JSON.parse(JSON.stringify(this.havingConditions)) : [];
         cloned.withRelations = this.withRelations ? [...this.withRelations] : [];
         cloned.withCallbacks = this.withCallbacks ? { ...this.withCallbacks } : undefined;
+        cloned.withColumns = this.withColumns ? { ...this.withColumns } : undefined;
         cloned.trashedMode = this.trashedMode;
         cloned.selectBindings = this.selectBindings ? [...this.selectBindings] : [];
         cloned.pivotConfig = this.pivotConfig
@@ -670,7 +723,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
         return this;
     }
 
-    private async loadRelations(instances: any[], relations: string[], model?: typeof Eloquent, prefix?: string) {
+    async loadRelations(instances: any[], relations: string[], model?: typeof Eloquent, prefix?: string) {
         if (!relations || relations.length === 0) return;
         const currentModel = model || this.model;
         for (const relation of relations) {
@@ -741,8 +794,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
             const map = new Map(relatedInstances.map((rel: any) => [rel[ownerKey], rel]));
             for (const inst of instances) {
                 const target = map.get(inst[foreignKey]) || null;
-                if (!(inst as any).__relations) Object.defineProperty(inst, '__relations', { value: {}, writable: true });
-                (inst as any).__relations[relationName] = target;
+                (inst as any)[relationName] = target;
             }
         } else if (type === 'hasMany') {
             const RelatedModel = config.model;
@@ -763,8 +815,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
                 (map.get(key) as any[]).push(rel);
             }
             for (const inst of instances) {
-                if (!(inst as any).__relations) Object.defineProperty(inst, '__relations', { value: {}, writable: true });
-                (inst as any).__relations[relationName] = map.get(inst[localKey]) || [];
+                (inst as any)[relationName] = map.get(inst[localKey]) || [];
             }
         } else if (type === 'hasOne') {
             const RelatedModel = config.model;
@@ -784,8 +835,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
                 map.set(key, rel);
             }
             for (const inst of instances) {
-                if (!(inst as any).__relations) Object.defineProperty(inst, '__relations', { value: {}, writable: true });
-                (inst as any).__relations[relationName] = map.get(inst[localKey]) || null;
+                (inst as any)[relationName] = map.get(inst[localKey]) || null;
             }
         } else if (type === 'morphOne') {
             const RelatedModel = config.model;
@@ -808,8 +858,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
                 map.set(key, rel);
             }
             for (const inst of instances) {
-                if (!(inst as any).__relations) Object.defineProperty(inst, '__relations', { value: {}, writable: true });
-                (inst as any).__relations[relationName] = map.get(inst[localKey]) || null;
+                (inst as any)[relationName] = map.get(inst[localKey]) || null;
             }
         } else if (type === 'morphMany') {
             const RelatedModel = config.model;
@@ -833,8 +882,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
                 (map.get(key) as any[]).push(rel);
             }
             for (const inst of instances) {
-                if (!(inst as any).__relations) Object.defineProperty(inst, '__relations', { value: {}, writable: true });
-                (inst as any).__relations[relationName] = map.get(inst[localKey]) || [];
+                (inst as any)[relationName] = map.get(inst[localKey]) || [];
             }
         } else if (type === 'morphTo') {
             const name = config.morphName;
@@ -853,8 +901,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
                 const ModelCtor = (Eloquent as any).getModelForMorphType(t);
                 if (!ModelCtor) {
                     for (const inst of list) {
-                        if (!(inst as any).__relations) Object.defineProperty(inst, '__relations', { value: {}, writable: true });
-                        (inst as any).__relations[relationName] = null;
+                        (inst as any)[relationName] = null;
                     }
                     continue;
                 }
@@ -867,8 +914,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
                 });
                 const map = new Map(relatedInstances.map((rel: any) => [rel.id, rel]));
                 for (const inst of list) {
-                    if (!(inst as any).__relations) Object.defineProperty(inst, '__relations', { value: {}, writable: true });
-                    (inst as any).__relations[relationName] = map.get(inst[idColumn]) || null;
+                    (inst as any)[relationName] = map.get(inst[idColumn]) || null;
                 }
             }
         } else if (type === 'belongsToMany') {
@@ -909,8 +955,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
                 arr.push(rel);
             }
             for (const inst of instances) {
-                if (!(inst as any).__relations) Object.defineProperty(inst, '__relations', { value: {}, writable: true });
-                (inst as any).__relations[relationName] = map.get(inst[parentKey]) || [];
+                (inst as any)[relationName] = map.get(inst[parentKey]) || [];
             }
         }
     }
@@ -1136,6 +1181,7 @@ class Eloquent {
     protected static table?: string;
     protected static fillable: string[] = [];
     protected static hidden: string[] = [];
+    protected static with: string[] = [];
     static connection: any = null;
     private static morphMap: Record<string, typeof Eloquent> = {};
 
@@ -1331,7 +1377,15 @@ class Eloquent {
     }
 
     static query<T extends typeof Eloquent>(this: T): QueryBuilder<T> {
-        return new QueryBuilder<T>(this);
+        const qb = new QueryBuilder<T>(this);
+
+        // Apply default eager loading if defined
+        const defaultWith = (this as any).with;
+        if (defaultWith && Array.isArray(defaultWith) && defaultWith.length > 0) {
+            qb.with(defaultWith);
+        }
+
+        return qb;
     }
 
     static schema?: z.ZodTypeAny;
@@ -1343,13 +1397,80 @@ class Eloquent {
             if (hidden.includes(key)) continue;
             out[key] = (this as any)[key];
         }
-        const rels = (this as any).__relations as Record<string, any> | undefined;
-        if (rels) {
-            for (const [k, v] of Object.entries(rels)) {
-                out[k] = v;
+        return out;
+    }
+
+    async load(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<this> {
+        await (this.constructor as any).load([this], relations);
+        return this;
+    }
+
+    async loadMissing(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<this> {
+        await (this.constructor as any).loadMissing([this], relations);
+        return this;
+    }
+
+    static async load(instances: Eloquent[], relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<void> {
+        if (instances.length === 0) return;
+
+        const model = instances[0].constructor as typeof Eloquent;
+        const qb = model.query();
+
+        // Apply the relations to the query builder
+        qb.with(relations);
+
+        // Load the relations by calling get() on a query that matches the instances
+        // This is a simplified approach - get all instances with relations loaded
+        const ids = instances.map(inst => (inst as any).id).filter(id => id !== null && id !== undefined);
+        if (ids.length === 0) return;
+
+        const loadedInstances = await model.query().with(relations).whereIn('id', ids).get();
+
+        // Create a map of loaded instances by ID
+        const loadedMap = new Map(loadedInstances.map(inst => [(inst as any).id, inst]));
+
+        // Determine relation names to copy onto instances
+        const names = this.parseRelationNames(relations);
+
+        // Copy relations from loaded instances to original instances at top-level
+        for (const instance of instances) {
+            const loaded = loadedMap.get((instance as any).id);
+            if (!loaded) continue;
+            for (const name of names) {
+                if ((loaded as any)[name] !== undefined) {
+                    (instance as any)[name] = (loaded as any)[name];
+                }
             }
         }
-        return out;
+    }
+
+    static async loadMissing(instances: Eloquent[], relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<void> {
+        if (instances.length === 0) return;
+
+        // Parse relations to get relation names
+        const relationNames = this.parseRelationNames(relations);
+
+        // Filter instances that don't have the relations loaded
+        const instancesToLoad = instances.filter(inst => {
+            const rels = (inst as any).__relations || {};
+            return relationNames.some(name => !(name in rels));
+        });
+
+        if (instancesToLoad.length === 0) return;
+
+        await this.load(instancesToLoad, relations);
+    }
+
+    private static parseRelationNames(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): string[] {
+        if (typeof relations === 'string') {
+            const base = relations.split(':')[0];
+            return [base.split('.')[0]];
+        } else if (Array.isArray(relations)) {
+            return relations.map(r => r.split(':')[0]).map(n => n.split('.')[0]);
+        } else if (relations && typeof relations === 'object') {
+            return Object.keys(relations).map(n => n.split('.')[0]);
+        }
+        return [];
     }
 }
 
