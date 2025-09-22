@@ -497,6 +497,35 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
         return this;
     }
 
+    latestOfMany(column = 'created_at'): this {
+        return this.ofMany(column, 'max');
+    }
+
+    oldestOfMany(column = 'created_at'): this {
+        return this.ofMany(column, 'min');
+    }
+
+    ofMany(column: string, aggregate: 'min' | 'max'): this {
+        const table = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
+
+        // Build the subquery to find the aggregate value
+        const subQuery = this.clone();
+        subQuery.selectColumns = [`${aggregate.toUpperCase()}(${column}) as aggregate_value`];
+        subQuery.limitValue = undefined;
+        subQuery.offsetValue = undefined;
+        subQuery.orderByClauses = [];
+
+        const subQuerySql = subQuery.buildSelectSql();
+
+        // Add condition to match the aggregate value
+        this.whereRaw(`${column} = (${subQuerySql.sql})`, subQuerySql.params);
+
+        // Add ordering and limit to ensure we get only one record
+        this.orderBy(column, aggregate === 'max' ? 'desc' : 'asc').limit(1);
+
+        return this;
+    }
+
     clone(): QueryBuilder<M> {
         const cloned = new QueryBuilder<M>(this.model);
         cloned.tableName = this.tableName;
@@ -982,7 +1011,9 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
             throw new Error(`Read-only ORM violation in ${context}: semicolons are not allowed`);
         }
         for (const k of QueryBuilder.FORBIDDEN_SQL) {
-            if (text.includes(k)) {
+            // Use word boundaries to avoid false positives like "created_at" matching "create"
+            const regex = new RegExp(`\\b${k}\\b`, 'i');
+            if (regex.test(text)) {
                 throw new Error(`Read-only ORM violation in ${context}: disallowed keyword '${k}'`);
             }
         }
@@ -1094,11 +1125,38 @@ class Eloquent {
         return related.query().where(foreignKey, (this as any)[localKey]);
     }
 
+    hasOneOfMany(related: typeof Eloquent, foreignKey: string, column = 'created_at', aggregate: 'min' | 'max' = 'max', localKey = 'id') {
+        return related.query().where(foreignKey, (this as any)[localKey]).ofMany(column, aggregate);
+    }
+
+    latestOfMany(related: typeof Eloquent, foreignKey: string, column = 'created_at', localKey = 'id') {
+        return this.hasOneOfMany(related, foreignKey, column, 'max', localKey);
+    }
+
+    oldestOfMany(related: typeof Eloquent, foreignKey: string, column = 'created_at', localKey = 'id') {
+        return this.hasOneOfMany(related, foreignKey, column, 'min', localKey);
+    }
+
     morphOne(related: typeof Eloquent, name: string, typeColumn?: string, idColumn?: string, localKey = 'id') {
         const tCol = typeColumn || `${name}_type`;
         const iCol = idColumn || `${name}_id`;
         const morphTypes: string[] = (Eloquent as any).getPossibleMorphTypesForModel(this.constructor as typeof Eloquent);
         return related.query().whereIn(tCol, morphTypes).where(iCol, (this as any)[localKey]);
+    }
+
+    morphOneOfMany(related: typeof Eloquent, name: string, column = 'created_at', aggregate: 'min' | 'max' = 'max', typeColumn?: string, idColumn?: string, localKey = 'id') {
+        const tCol = typeColumn || `${name}_type`;
+        const iCol = idColumn || `${name}_id`;
+        const morphTypes: string[] = (Eloquent as any).getPossibleMorphTypesForModel(this.constructor as typeof Eloquent);
+        return related.query().whereIn(tCol, morphTypes).where(iCol, (this as any)[localKey]).ofMany(column, aggregate);
+    }
+
+    latestMorphOne(related: typeof Eloquent, name: string, column = 'created_at', typeColumn?: string, idColumn?: string, localKey = 'id') {
+        return this.morphOneOfMany(related, name, column, 'max', typeColumn, idColumn, localKey);
+    }
+
+    oldestMorphOne(related: typeof Eloquent, name: string, column = 'created_at', typeColumn?: string, idColumn?: string, localKey = 'id') {
+        return this.morphOneOfMany(related, name, column, 'min', typeColumn, idColumn, localKey);
     }
 
     morphMany(related: typeof Eloquent, name: string, typeColumn?: string, idColumn?: string, localKey = 'id') {
