@@ -1,13 +1,15 @@
 # Getting Started with Eloquent ORM
 
-A comprehensive guide to get you up and running with Eloquent ORM in your TypeScript project.
+A comprehensive guide to get you up and running with Eloquent ORM in your TypeScript project for accessing Laravel databases.
 
 ## Prerequisites
 
 - Node.js 16+
 - TypeScript 4.5+
-- An existing database connection (MySQL, PostgreSQL, SQLite, etc.)
-- Basic familiarity with ORMs and SQL
+- **An existing Laravel application** with database models
+- **Access to the Laravel database** (same database connection details)
+- Basic familiarity with Laravel Eloquent and ORMs
+- Knowledge of your Laravel model structure and relationships
 
 ## Installation
 
@@ -19,51 +21,64 @@ npm install @benqoder/eloquent-orm zod
 
 ### 1. Initialize the ORM
 
-First, initialize Eloquent with your existing database connection:
+First, initialize Eloquent with a connection to your Laravel database:
 
 ```typescript
 import Eloquent from '@benqoder/eloquent-orm';
 import mysql from 'mysql2/promise';
 
-// Create your database connection (example with MySQL)
+// Connect to your Laravel database using the same credentials
 const connection = await mysql.createConnection({
-    host: 'localhost',
-    user: 'your_user',
-    password: 'your_password',
-    database: 'your_database'
+    host: process.env.DB_HOST || 'localhost',
+    user: process.env.DB_USERNAME || 'your_user',
+    password: process.env.DB_PASSWORD || 'your_password',
+    database: process.env.DB_DATABASE || 'your_laravel_database', // Same as Laravel
+    port: parseInt(process.env.DB_PORT || '3306')
 });
 
 // Initialize Eloquent
 await Eloquent.init(connection);
 ```
 
-### 2. Create Your First Model
+**Important**: Use the exact same database connection details as your Laravel application's `.env` file.
 
-Create a model file (e.g., `models/User.ts`):
+### 2. Create Your First Model (Mirror Your Laravel Model)
+
+Create a TypeScript model that mirrors your existing Laravel User model:
 
 ```typescript
 import Eloquent from '@benqoder/eloquent-orm';
 import { z } from 'zod';
 
+// This should match your Laravel User model exactly
 class User extends Eloquent {
-    // Specify the table name
+    // Same table name as your Laravel User model
     protected static table = 'users';
 
-    // Define the Zod schema for validation and typing
+    // Define the Zod schema matching your Laravel User migration
     static schema = z.object({
         id: z.number().int().optional(),
         name: z.string(),
         email: z.string().email(),
-        age: z.number().int().min(0).optional(),
-        is_active: z.boolean().default(true),
+        email_verified_at: z.union([z.string(), z.date()]).nullable().optional(),
+        password: z.string().optional(), // Will be hidden
+        remember_token: z.string().nullable().optional(),
         created_at: z.union([z.string(), z.date()]).nullable().optional(),
         updated_at: z.union([z.string(), z.date()]).nullable().optional(),
     });
 
-    // Define relation types (we'll add relations later)
+    // Define relation types matching your Laravel User relationships
     relationsTypes!: {
-        // Relations will be defined here
+        // Add relations that exist in your Laravel User model
+        // posts: Post[];
+        // profile: Profile[];
+        // roles: Role[];
     };
+
+    // Mirror the relationships from your Laravel User model
+    // posts() {
+    //     return this.hasMany(Post, 'user_id');
+    // }
 }
 
 // Use declaration merging for automatic schema typing
@@ -71,6 +86,18 @@ interface User extends z.infer<typeof User.schema> {}
 
 export default User;
 ```
+
+**Key Points:**
+- Mirror your Laravel model's table name, schema, and relationships exactly
+- Include all fields from your Laravel migration
+- Use nullable/optional appropriately based on your database schema
+- Don't worry about password fields - they can be hidden or ignored
+
+**Important Architecture Note:**
+- 🚫 **Never create/update/delete** data through this Node.js ORM
+- ✅ **All write operations** should go through your Laravel backend
+- ✅ **Migrations and schema changes** should be done in Laravel
+- ✅ **This ORM is only for reading** data from your Laravel database
 
 ### 3. Your First Query
 

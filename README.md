@@ -1,15 +1,53 @@
 # Eloquent ORM - TypeScript Read-Only ORM
 
-A powerful, type-safe, read-only ORM for TypeScript inspired by Laravel's Eloquent ORM. Built with Zod for runtime validation and designed specifically for data querying and retrieval operations.
+A powerful, type-safe, read-only ORM for TypeScript that allows you to access Laravel databases from Node.js environments. Built with Zod for runtime validation and designed specifically for data querying and retrieval operations.
 
-## 🎯 Purpose & Design Philosophy
+## 🎯 Purpose & Use Case
+
+**Laravel Database Access from Node.js**: This ORM is specifically designed for scenarios where you have a Laravel backend but need to access the same database from Node.js applications (microservices, analytics tools, reporting services, etc.).
+
+**Perfect for:**
+- Node.js microservices that need to read from Laravel databases
+- Analytics and reporting tools built in Node.js
+- API gateways that aggregate data from Laravel databases
+- Background processing services
+- Real-time dashboards and monitoring tools
 
 **Read-Only by Design**: This ORM is intentionally designed for read operations only. It does not support insert, update, delete, or DDL operations. This design choice ensures:
 
-- **Safety**: Prevents accidental data mutations
+- **Safety**: Prevents accidental data mutations (write operations should go through Laravel)
 - **Performance**: Optimized specifically for querying
 - **Clarity**: Clear separation between read and write operations
 - **Security**: Runtime guards reject non-SELECT SQL statements
+- **Laravel Compatibility**: Maintains your Laravel app as the single source of truth for data mutations
+- **Migration Management**: Database schema changes and migrations remain in your Laravel backend
+- **Business Logic**: All write operations, validations, and business logic stay in Laravel
+
+## 🏗️ Architecture Pattern
+
+This ORM enables a clean separation of concerns in multi-service architectures:
+
+```
+┌─────────────────────┐    ┌─────────────────────┐
+│   Laravel Backend   │    │  Node.js Services   │
+│                     │    │                     │
+│  ✅ Write Operations│    │  ✅ Read Operations │
+│  ✅ Migrations      │    │  ✅ Analytics       │
+│  ✅ Business Logic  │    │  ✅ Reporting       │
+│  ✅ Validations     │    │  ✅ API Gateways    │
+│  ✅ Seeders         │    │  ✅ Dashboards      │
+│                     │    │                     │
+└─────────┬───────────┘    └─────────┬───────────┘
+          │                          │
+          └──────────┬─────────────────┘
+                     │
+           ┌─────────▼─────────┐
+           │   Shared Database │
+           │                   │
+           │  📊 MySQL/Postgres│
+           │  📊 Same Schema   │
+           └───────────────────┘
+```
 
 ## ✨ Key Features
 
@@ -28,41 +66,65 @@ A powerful, type-safe, read-only ORM for TypeScript inspired by Laravel's Eloque
 npm install @benqoder/eloquent-orm
 ```
 
+## 🏗️ Prerequisites
+
+This package is designed to work with existing Laravel applications. You'll need:
+
+- **Laravel Backend**: An existing Laravel application with database models
+- **Shared Database**: Access to the same database used by your Laravel app
+- **Database Connection**: A Node.js database connection to your Laravel database
+- **Laravel Schema Knowledge**: Understanding of your Laravel model structure and relationships
+
 ## 🚀 Quick Start
 
 ### 1. Initialize Connection
 
 ```typescript
 import Eloquent from '@benqoder/eloquent-orm';
+import mysql from 'mysql2/promise';
 
-// Initialize with your existing database connection
+// Connect to your Laravel database
+const connection = await mysql.createConnection({
+    host: process.env.DB_HOST,
+    user: process.env.DB_USERNAME,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_DATABASE, // Same database as your Laravel app
+    port: parseInt(process.env.DB_PORT || '3306')
+});
+
+// Initialize Eloquent with the Laravel database connection
 await Eloquent.init(connection);
 ```
 
-### 2. Define Models
+### 2. Define Models (Mirror Your Laravel Models)
+
+Create TypeScript models that mirror your existing Laravel Eloquent models:
 
 ```typescript
 import Eloquent from '@benqoder/eloquent-orm';
 import { z } from 'zod';
 
+// This should mirror your Laravel User model
 class User extends Eloquent {
-    protected static table = 'users';
+    protected static table = 'users'; // Same table as Laravel
 
-    // Define Zod schema for type safety
+    // Define Zod schema matching your Laravel migration/model
     static schema = z.object({
         id: z.number().int().optional(),
         name: z.string(),
         email: z.string().email(),
+        email_verified_at: z.union([z.string(), z.date()]).nullable().optional(),
         created_at: z.union([z.string(), z.date()]).nullable().optional(),
+        updated_at: z.union([z.string(), z.date()]).nullable().optional(),
     });
 
-    // Define relation types for TypeScript
+    // Define relation types matching your Laravel relationships
     relationsTypes!: {
         posts: Post[];
         profile: Profile;
     };
 
-    // Define relationships
+    // Define relationships (same as your Laravel model)
     posts() {
         return this.hasMany(Post, 'user_id');
     }
@@ -486,6 +548,16 @@ user.delete();                   // No delete
 User.query().update({...});      // No update
 User.query().insert({...});      // No insert
 ```
+
+### Laravel Backend Responsibilities
+
+**All write operations and schema management should happen in your Laravel backend:**
+
+- **Migrations**: Use Laravel's migration system (`php artisan migrate`)
+- **Create/Update/Delete**: Use Laravel controllers, jobs, or artisan commands
+- **Schema Changes**: Add new tables/columns through Laravel migrations
+- **Business Logic**: Keep validation rules and business logic in Laravel
+- **Seeders**: Use Laravel seeders for populating test data
 
 ### SQL Restrictions
 
