@@ -15,10 +15,14 @@
  * @readonly
  */
 import type { z } from 'zod';
-type InferModel<M extends typeof Eloquent> = M extends {
-    schema: infer S;
-} ? S extends z.ZodTypeAny ? z.infer<S> : unknown : unknown;
-declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
+type RelationsOf<T> = T extends {
+    relationsTypes: infer RT;
+} ? RT : {};
+type RelationData<M, K extends string> = {
+    [P in K]: P extends keyof RelationsOf<M> ? RelationsOf<M>[P] : any;
+};
+type WithRelations<M, K extends string> = M & RelationData<M, K>;
+declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends string = never> {
     private model;
     private conditions;
     private tableName?;
@@ -92,7 +96,7 @@ declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
     selectRaw(sql: string, bindings?: any[]): this;
     whereRaw(sql: string, bindings?: any[]): this;
     orWhereRaw(sql: string, bindings?: any[]): this;
-    when(condition: any, callback: (query: QueryBuilder<any>) => void, defaultCallback?: (query: QueryBuilder<any>) => void): this;
+    when(condition: any, callback: (query: this) => void, defaultCallback?: (query: this) => void): this;
     whereHas(relation: string, callback?: (query: QueryBuilder) => void): this;
     orWhereHas(relation: string, callback?: (query: QueryBuilder) => void): this;
     doesntHave(relation: string, callback?: (query: QueryBuilder) => void): this;
@@ -107,29 +111,29 @@ declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
     withCount(relations: string | string[] | Record<string, (query: QueryBuilder) => void>): this;
     private buildCountSubquery;
     private buildHasSubquery;
-    with(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>, callback?: (query: QueryBuilder<any>) => void): this;
+    with<K extends string>(relations: K | K[] | Record<K, string[] | ((query: QueryBuilder<any>) => void)>, callback?: (query: QueryBuilder<any>) => void): QueryBuilder<M, TWith | K>;
     private parseRelationWithColumns;
-    withWhereHas(relation: string, callback?: (query: QueryBuilder) => void): this;
+    withWhereHas(relation: string, callback?: (query: QueryBuilder) => void): any;
     without(relations: string | string[]): this;
-    withOnly(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): this;
+    withOnly(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): any;
     withTrashed(): this;
     onlyTrashed(): this;
     withoutTrashed(): this;
     latestOfMany(column?: string): this;
     oldestOfMany(column?: string): this;
     ofMany(column: string, aggregate: 'min' | 'max'): this;
-    clone(): QueryBuilder<M>;
+    clone(): QueryBuilder<M, TWith>;
     private chunkArray;
     private getInBatches;
     private setPivotSource;
     as(alias: string): this;
     withPivot(...columns: string[]): this;
-    private loadRelations;
+    loadRelations(instances: any[], relations: string[], model?: typeof Eloquent, prefix?: string): Promise<void>;
     private loadSingleRelation;
     chunk(size: number, callback: (results: any[]) => Promise<void> | void): Promise<void>;
     private buildWhereClause;
-    first(): Promise<(InstanceType<M> & InferModel<M>) | null>;
-    get(): Promise<Array<InstanceType<M> & InferModel<M>>>;
+    first(): Promise<WithRelations<InstanceType<M>, TWith> | null>;
+    get(): Promise<Array<WithRelations<InstanceType<M>, TWith>>>;
     private buildSelectSql;
     private ensureReadOnlySnippet;
     private ensureReadOnlySql;
@@ -138,7 +142,7 @@ declare class ThroughBuilder {
     private instance;
     private throughRelation;
     constructor(instance: Eloquent, throughRelation: string);
-    has(finalRelation: string): QueryBuilder<typeof Eloquent>;
+    has(finalRelation: string): QueryBuilder<typeof Eloquent, never>;
 }
 declare class Eloquent {
     [key: string]: any;
@@ -153,30 +157,32 @@ declare class Eloquent {
     static useConnection(connection: any, morphs?: Record<string, typeof Eloquent>): void;
     static getRelationConfig(model: typeof Eloquent, relationName: string): any | null;
     static describeRelation(model: typeof Eloquent, relationName: string): any | null;
-    belongsTo(related: typeof Eloquent, foreignKey: string, ownerKey?: string): QueryBuilder<typeof Eloquent>;
-    hasMany(related: typeof Eloquent, foreignKey: string, localKey?: string): QueryBuilder<typeof Eloquent>;
-    hasOne(related: typeof Eloquent, foreignKey: string, localKey?: string): QueryBuilder<typeof Eloquent>;
-    hasOneOfMany(related: typeof Eloquent, foreignKey: string, column?: string, aggregate?: 'min' | 'max', localKey?: string): QueryBuilder<typeof Eloquent>;
-    latestOfMany(related: typeof Eloquent, foreignKey: string, column?: string, localKey?: string): QueryBuilder<typeof Eloquent>;
-    oldestOfMany(related: typeof Eloquent, foreignKey: string, column?: string, localKey?: string): QueryBuilder<typeof Eloquent>;
-    morphOne(related: typeof Eloquent, name: string, typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<typeof Eloquent>;
-    morphOneOfMany(related: typeof Eloquent, name: string, column?: string, aggregate?: 'min' | 'max', typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<typeof Eloquent>;
-    latestMorphOne(related: typeof Eloquent, name: string, column?: string, typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<typeof Eloquent>;
-    oldestMorphOne(related: typeof Eloquent, name: string, column?: string, typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<typeof Eloquent>;
-    morphMany(related: typeof Eloquent, name: string, typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<typeof Eloquent>;
+    belongsTo(related: typeof Eloquent, foreignKey: string, ownerKey?: string): QueryBuilder<typeof Eloquent, never>;
+    hasMany(related: typeof Eloquent, foreignKey: string, localKey?: string): QueryBuilder<typeof Eloquent, never>;
+    hasOne(related: typeof Eloquent, foreignKey: string, localKey?: string): QueryBuilder<typeof Eloquent, never>;
+    hasOneOfMany(related: typeof Eloquent, foreignKey: string, column?: string, aggregate?: 'min' | 'max', localKey?: string): QueryBuilder<typeof Eloquent, never>;
+    latestOfMany(related: typeof Eloquent, foreignKey: string, column?: string, localKey?: string): QueryBuilder<typeof Eloquent, never>;
+    oldestOfMany(related: typeof Eloquent, foreignKey: string, column?: string, localKey?: string): QueryBuilder<typeof Eloquent, never>;
+    morphOne(related: typeof Eloquent, name: string, typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<typeof Eloquent, never>;
+    morphOneOfMany(related: typeof Eloquent, name: string, column?: string, aggregate?: 'min' | 'max', typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<typeof Eloquent, never>;
+    latestMorphOne(related: typeof Eloquent, name: string, column?: string, typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<typeof Eloquent, never>;
+    oldestMorphOne(related: typeof Eloquent, name: string, column?: string, typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<typeof Eloquent, never>;
+    morphMany(related: typeof Eloquent, name: string, typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<typeof Eloquent, never>;
     morphTo(name: string, typeColumn?: string, idColumn?: string): any;
     static registerMorphMap(map: Record<string, typeof Eloquent>): void;
     static getMorphTypeForModel(model: typeof Eloquent): string;
     static getModelForMorphType(type: string): typeof Eloquent | null;
     static getPossibleMorphTypesForModel(model: typeof Eloquent): string[];
-    hasOneThrough(related: typeof Eloquent, through: typeof Eloquent, firstKey?: string, secondKey?: string, localKey?: string, secondLocalKey?: string): QueryBuilder<typeof Eloquent>;
-    hasManyThrough(related: typeof Eloquent, through: typeof Eloquent, firstKey?: string, secondKey?: string, localKey?: string, secondLocalKey?: string): QueryBuilder<typeof Eloquent>;
-    belongsToMany(related: typeof Eloquent, table?: string, foreignPivotKey?: string, relatedPivotKey?: string, parentKey?: string, relatedKey?: string): QueryBuilder<typeof Eloquent>;
+    hasOneThrough(related: typeof Eloquent, through: typeof Eloquent, firstKey?: string, secondKey?: string, localKey?: string, secondLocalKey?: string): QueryBuilder<typeof Eloquent, never>;
+    hasManyThrough(related: typeof Eloquent, through: typeof Eloquent, firstKey?: string, secondKey?: string, localKey?: string, secondLocalKey?: string): QueryBuilder<typeof Eloquent, never>;
+    belongsToMany(related: typeof Eloquent, table?: string, foreignPivotKey?: string, relatedPivotKey?: string, parentKey?: string, relatedKey?: string): QueryBuilder<typeof Eloquent, never>;
     static getProperty(key: string): any;
     through(relationship: string): ThroughBuilder;
-    static query<T extends typeof Eloquent>(this: T): QueryBuilder<T>;
+    static query<T extends typeof Eloquent>(this: T): QueryBuilder<T, never>;
     static schema?: z.ZodTypeAny;
     toJSON(): any;
+    load(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<this>;
+    loadMissing(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<this>;
     static load(instances: Eloquent[], relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<void>;
     static loadMissing(instances: Eloquent[], relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<void>;
     private static parseRelationNames;

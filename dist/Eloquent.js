@@ -711,9 +711,7 @@ class QueryBuilder {
             const map = new Map(relatedInstances.map((rel) => [rel[ownerKey], rel]));
             for (const inst of instances) {
                 const target = map.get(inst[foreignKey]) || null;
-                if (!inst.__relations)
-                    Object.defineProperty(inst, '__relations', { value: {}, writable: true });
-                inst.__relations[relationName] = target;
+                inst[relationName] = target;
             }
         }
         else if (type === 'hasMany') {
@@ -738,9 +736,7 @@ class QueryBuilder {
                 map.get(key).push(rel);
             }
             for (const inst of instances) {
-                if (!inst.__relations)
-                    Object.defineProperty(inst, '__relations', { value: {}, writable: true });
-                inst.__relations[relationName] = map.get(inst[localKey]) || [];
+                inst[relationName] = map.get(inst[localKey]) || [];
             }
         }
         else if (type === 'hasOne') {
@@ -763,9 +759,7 @@ class QueryBuilder {
                 map.set(key, rel);
             }
             for (const inst of instances) {
-                if (!inst.__relations)
-                    Object.defineProperty(inst, '__relations', { value: {}, writable: true });
-                inst.__relations[relationName] = map.get(inst[localKey]) || null;
+                inst[relationName] = map.get(inst[localKey]) || null;
             }
         }
         else if (type === 'morphOne') {
@@ -791,9 +785,7 @@ class QueryBuilder {
                 map.set(key, rel);
             }
             for (const inst of instances) {
-                if (!inst.__relations)
-                    Object.defineProperty(inst, '__relations', { value: {}, writable: true });
-                inst.__relations[relationName] = map.get(inst[localKey]) || null;
+                inst[relationName] = map.get(inst[localKey]) || null;
             }
         }
         else if (type === 'morphMany') {
@@ -821,9 +813,7 @@ class QueryBuilder {
                 map.get(key).push(rel);
             }
             for (const inst of instances) {
-                if (!inst.__relations)
-                    Object.defineProperty(inst, '__relations', { value: {}, writable: true });
-                inst.__relations[relationName] = map.get(inst[localKey]) || [];
+                inst[relationName] = map.get(inst[localKey]) || [];
             }
         }
         else if (type === 'morphTo') {
@@ -847,9 +837,7 @@ class QueryBuilder {
                 const ModelCtor = Eloquent.getModelForMorphType(t);
                 if (!ModelCtor) {
                     for (const inst of list) {
-                        if (!inst.__relations)
-                            Object.defineProperty(inst, '__relations', { value: {}, writable: true });
-                        inst.__relations[relationName] = null;
+                        inst[relationName] = null;
                     }
                     continue;
                 }
@@ -863,9 +851,7 @@ class QueryBuilder {
                 });
                 const map = new Map(relatedInstances.map((rel) => [rel.id, rel]));
                 for (const inst of list) {
-                    if (!inst.__relations)
-                        Object.defineProperty(inst, '__relations', { value: {}, writable: true });
-                    inst.__relations[relationName] = map.get(inst[idColumn]) || null;
+                    inst[relationName] = map.get(inst[idColumn]) || null;
                 }
             }
         }
@@ -913,9 +899,7 @@ class QueryBuilder {
                 arr.push(rel);
             }
             for (const inst of instances) {
-                if (!inst.__relations)
-                    Object.defineProperty(inst, '__relations', { value: {}, writable: true });
-                inst.__relations[relationName] = map.get(inst[parentKey]) || [];
+                inst[relationName] = map.get(inst[parentKey]) || [];
             }
         }
     }
@@ -1349,13 +1333,15 @@ class Eloquent {
                 continue;
             out[key] = this[key];
         }
-        const rels = this.__relations;
-        if (rels) {
-            for (const [k, v] of Object.entries(rels)) {
-                out[k] = v;
-            }
-        }
         return out;
+    }
+    async load(relations) {
+        await this.constructor.load([this], relations);
+        return this;
+    }
+    async loadMissing(relations) {
+        await this.constructor.loadMissing([this], relations);
+        return this;
     }
     static async load(instances, relations) {
         if (instances.length === 0)
@@ -1372,11 +1358,17 @@ class Eloquent {
         const loadedInstances = await model.query().with(relations).whereIn('id', ids).get();
         // Create a map of loaded instances by ID
         const loadedMap = new Map(loadedInstances.map(inst => [inst.id, inst]));
-        // Copy relations from loaded instances to original instances
+        // Determine relation names to copy onto instances
+        const names = this.parseRelationNames(relations);
+        // Copy relations from loaded instances to original instances at top-level
         for (const instance of instances) {
             const loaded = loadedMap.get(instance.id);
-            if (loaded && loaded.__relations) {
-                instance.__relations = { ...instance.__relations, ...loaded.__relations };
+            if (!loaded)
+                continue;
+            for (const name of names) {
+                if (loaded[name] !== undefined) {
+                    instance[name] = loaded[name];
+                }
             }
         }
     }
@@ -1396,13 +1388,14 @@ class Eloquent {
     }
     static parseRelationNames(relations) {
         if (typeof relations === 'string') {
-            return [relations.split(':')[0]];
+            const base = relations.split(':')[0];
+            return [base.split('.')[0]];
         }
         else if (Array.isArray(relations)) {
-            return relations.map(r => r.split(':')[0]);
+            return relations.map(r => r.split(':')[0]).map(n => n.split('.')[0]);
         }
         else if (relations && typeof relations === 'object') {
-            return Object.keys(relations);
+            return Object.keys(relations).map(n => n.split('.')[0]);
         }
         return [];
     }

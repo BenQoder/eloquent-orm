@@ -15,15 +15,55 @@
  * @readonly
  */
 import type { z } from 'zod';
-type InferModel<M extends typeof Eloquent> = M extends { schema: infer S }
+// Schema and relation typing helpers
+type ModelInstance<M> = M extends abstract new (...args: any) => infer I ? I : any;
+// Relations map is optional per model via static relationsTypes
+type RelationsOf<T> = T extends { relationsTypes: infer RT } ? RT : {};
+// Schema map from static schema (Zod) - infer from constructor
+type SchemaOf<T> = T extends { constructor: infer C }
+    ? C extends { schema: infer S }
+        ? S extends z.ZodTypeAny
+            ? z.infer<S>
+            : never
+        : never
+    : never;
+
+// Alternative: try to infer schema from model constructor directly
+type ModelSchemaType<M> = M extends { schema: infer S }
     ? S extends z.ZodTypeAny
-    ? z.infer<S>
-    : unknown
-    : unknown;
+        ? z.infer<S>
+        : never
+    : never;
+// Final result type merges model instance with schema (fields) and declared relation properties
+type ResultType<M> = ModelInstance<M> & SchemaOf<ModelInstance<M>> & Partial<RelationsOf<ModelInstance<M>>>;
+// Helper to extract only the relation data we want to add
+type RelationData<M, K extends string> = {
+    [P in K]: P extends keyof RelationsOf<M>
+        ? RelationsOf<M>[P]
+        : any;
+};
+
+// Type that adds loaded relation data to the model
+type WithRelations<M, K extends string> = M & RelationData<M, K>;
+
+// Helper to infer relation types from model methods
+type InferRelationType<T, K extends string> =
+    T extends { prototype: { [P in K]: () => infer R } }
+        ? R extends { model: infer M }
+            ? M extends typeof Eloquent
+                ? InstanceType<M>
+                : any
+            : any
+        : any;
+
+// Map relation names to their actual types
+type RelationTypes<T, K extends string> = {
+    [P in K]: InferRelationType<T, P>
+};
 
 type Condition = { operator: 'AND' | 'OR'; type: 'basic'; conditionOperator: string; column: string; value: any } | { operator: 'AND' | 'OR'; type: 'in' | 'not_in'; column: string; value: any[] } | { operator: 'AND' | 'OR'; type: 'null' | 'not_null'; column: string } | { operator: 'AND' | 'OR'; type: 'between' | 'not_between'; column: string; value: [any, any] } | { operator: 'AND' | 'OR'; type: 'raw'; sql: string; bindings: any[] } | { operator: 'AND' | 'OR'; group: Condition[] };
 
-class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
+class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends string = never> {
     private model: M;
     private conditions: Condition[] = [];
     private tableName?: string;
@@ -358,7 +398,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
         return this;
     }
 
-    when(condition: any, callback: (query: QueryBuilder<any>) => void, defaultCallback?: (query: QueryBuilder<any>) => void): this {
+    when(condition: any, callback: (query: this) => void, defaultCallback?: (query: this) => void): this {
         if (condition) {
             callback(this);
         } else if (defaultCallback) {
@@ -543,7 +583,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
         return { sql, params };
     }
 
-    with(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>, callback?: (query: QueryBuilder<any>) => void): this {
+    with<K extends string>(relations: K | K[] | Record<K, string[] | ((query: QueryBuilder<any>) => void)>, callback?: (query: QueryBuilder<any>) => void): QueryBuilder<M, TWith | K> {
         if (!this.withRelations) this.withRelations = [];
         if (!this.withCallbacks) this.withCallbacks = {};
         if (!this.withColumns) this.withColumns = {};
@@ -569,7 +609,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
                 }
             }
         }
-        return this;
+        return this as any;
     }
 
     private parseRelationWithColumns(relation: string): { relation: string, columns?: string[] } {
@@ -583,7 +623,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
         return { relation: relName, columns };
     }
 
-    withWhereHas(relation: string, callback?: (query: QueryBuilder) => void): this {
+    withWhereHas(relation: string, callback?: (query: QueryBuilder) => void): any {
         // withWhereHas both constrains the query and eager loads the relation
         this.whereHas(relation, callback);
         return this.with(relation, callback);
@@ -604,7 +644,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
         return this;
     }
 
-    withOnly(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): this {
+    withOnly(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): any {
         // Clear existing relations and set only the specified ones
         this.withRelations = [];
         this.withCallbacks = {};
@@ -657,8 +697,8 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
         return this;
     }
 
-    clone(): QueryBuilder<M> {
-        const cloned = new QueryBuilder<M>(this.model);
+    clone(): QueryBuilder<M, TWith> {
+        const cloned = new QueryBuilder<M, TWith>(this.model);
         cloned.tableName = this.tableName;
         cloned.conditions = this.conditions ? JSON.parse(JSON.stringify(this.conditions)) : [];
         cloned.selectColumns = this.selectColumns ? [...this.selectColumns] : ['*'];
@@ -1025,18 +1065,18 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
         return { sql, params };
     }
 
-    async first(): Promise<(InstanceType<M> & InferModel<M>) | null> {
+    async first(): Promise<WithRelations<InstanceType<M>, TWith> | null> {
         if (!Eloquent.connection) throw new Error('Database connection not initialized');
         const one = this.clone().limit(1);
         const rows = await one.get();
-        const result = (rows as any[])[0] as (InstanceType<M> & InferModel<M>) | undefined;
+        const result = (rows as any[])[0] as InstanceType<M> | undefined;
         if (result) {
             await this.loadRelations([result], this.withRelations || []);
         }
-        return result ?? null;
+        return result as any ?? null;
     }
 
-    async get(): Promise<Array<InstanceType<M> & InferModel<M>>> {
+    async get(): Promise<Array<WithRelations<InstanceType<M>, TWith>>> {
         if (!Eloquent.connection) throw new Error('Database connection not initialized');
         const hasUnions = this.unions.length > 0;
         const main = this.buildSelectSql({ includeOrderLimit: !hasUnions });
@@ -1061,7 +1101,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
         this.ensureReadOnlySql(sql, 'get');
         const [rows] = await (Eloquent.connection as any).query(sql, allParams);
         const instances = (rows as any[]).map(row => {
-            const instance = new (this.model as any)() as InstanceType<M> & InferModel<M>;
+            const instance = new (this.model as any)() as InstanceType<M>;
             // Extract pivot data if requested
             if (this.pivotConfig) {
                 const pivotObj: any = {};
@@ -1084,7 +1124,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
             return instance;
         });
         await this.loadRelations(instances, this.withRelations || []);
-        return instances as Array<InstanceType<M> & InferModel<M>>;
+        return instances as any;
     }
 
     private buildSelectSql(options?: { includeOrderLimit?: boolean }): { sql: string; params: any[] } {
@@ -1376,8 +1416,8 @@ class Eloquent {
         return new ThroughBuilder(this, relationship);
     }
 
-    static query<T extends typeof Eloquent>(this: T): QueryBuilder<T> {
-        const qb = new QueryBuilder<T>(this);
+    static query<T extends typeof Eloquent>(this: T): QueryBuilder<T, never> {
+        const qb = new QueryBuilder<T, never>(this);
 
         // Apply default eager loading if defined
         const defaultWith = (this as any).with;
