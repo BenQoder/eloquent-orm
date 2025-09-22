@@ -1,0 +1,21 @@
+{
+    "name": "@benqoder/eloquent-orm",
+    "version": "0.1.0",
+    "type": "module",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "import": "./dist/index.js",
+            "types": "./dist/index.d.ts"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "clean": "rimraf dist"
+    },
+    "dependencies": {
+        "mysql2": "^3.15.0",
+        "zod": "4.1.11"
+    }
+}
