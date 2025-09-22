@@ -1278,19 +1278,19 @@ class Eloquent {
         return null;
     }
 
-    belongsTo(related: typeof Eloquent, foreignKey: string, ownerKey = 'id') {
+    belongsTo<T extends typeof Eloquent>(related: T, foreignKey: string, ownerKey = 'id'): QueryBuilder<T, never> {
         return related.query().where(ownerKey, (this as any)[foreignKey]);
     }
 
-    hasMany(related: typeof Eloquent, foreignKey: string, localKey = 'id') {
+    hasMany<T extends typeof Eloquent>(related: T, foreignKey: string, localKey = 'id'): QueryBuilder<T, never> {
         return related.query().where(foreignKey, (this as any)[localKey]);
     }
 
-    hasOne(related: typeof Eloquent, foreignKey: string, localKey = 'id') {
+    hasOne<T extends typeof Eloquent>(related: T, foreignKey: string, localKey = 'id'): QueryBuilder<T, never> {
         return related.query().where(foreignKey, (this as any)[localKey]);
     }
 
-    hasOneOfMany(related: typeof Eloquent, foreignKey: string, column = 'created_at', aggregate: 'min' | 'max' = 'max', localKey = 'id') {
+    hasOneOfMany<T extends typeof Eloquent>(related: T, foreignKey: string, column = 'created_at', aggregate: 'min' | 'max' = 'max', localKey = 'id'): QueryBuilder<T, never> {
         return related.query().where(foreignKey, (this as any)[localKey]).ofMany(column, aggregate);
     }
 
@@ -1400,7 +1400,7 @@ class Eloquent {
         return related.query().join(throughTable, `${relatedTable}.${fk2}`, '=', `${throughTable}.${secondLocalKey}`).where(`${throughTable}.${fk1}`, (this as any)[localKey]);
     }
 
-    belongsToMany(related: typeof Eloquent, table?: string, foreignPivotKey?: string, relatedPivotKey?: string, parentKey = 'id', relatedKey = 'id') {
+    belongsToMany<T extends typeof Eloquent>(related: T, table?: string, foreignPivotKey?: string, relatedPivotKey?: string, parentKey = 'id', relatedKey = 'id'): QueryBuilder<T, never> {
         const pivotTable = table || [this.constructor.name.toLowerCase(), related.name.toLowerCase()].sort().join('_');
         const fpk = foreignPivotKey || `${this.constructor.name.toLowerCase()}_id`;
         const rpk = relatedPivotKey || `${related.name.toLowerCase()}_id`;

@@ -157,10 +157,10 @@ declare class Eloquent {
     static useConnection(connection: any, morphs?: Record<string, typeof Eloquent>): void;
     static getRelationConfig(model: typeof Eloquent, relationName: string): any | null;
     static describeRelation(model: typeof Eloquent, relationName: string): any | null;
-    belongsTo(related: typeof Eloquent, foreignKey: string, ownerKey?: string): QueryBuilder<typeof Eloquent, never>;
-    hasMany(related: typeof Eloquent, foreignKey: string, localKey?: string): QueryBuilder<typeof Eloquent, never>;
-    hasOne(related: typeof Eloquent, foreignKey: string, localKey?: string): QueryBuilder<typeof Eloquent, never>;
-    hasOneOfMany(related: typeof Eloquent, foreignKey: string, column?: string, aggregate?: 'min' | 'max', localKey?: string): QueryBuilder<typeof Eloquent, never>;
+    belongsTo<T extends typeof Eloquent>(related: T, foreignKey: string, ownerKey?: string): QueryBuilder<T, never>;
+    hasMany<T extends typeof Eloquent>(related: T, foreignKey: string, localKey?: string): QueryBuilder<T, never>;
+    hasOne<T extends typeof Eloquent>(related: T, foreignKey: string, localKey?: string): QueryBuilder<T, never>;
+    hasOneOfMany<T extends typeof Eloquent>(related: T, foreignKey: string, column?: string, aggregate?: 'min' | 'max', localKey?: string): QueryBuilder<T, never>;
     latestOfMany(related: typeof Eloquent, foreignKey: string, column?: string, localKey?: string): QueryBuilder<typeof Eloquent, never>;
     oldestOfMany(related: typeof Eloquent, foreignKey: string, column?: string, localKey?: string): QueryBuilder<typeof Eloquent, never>;
     morphOne(related: typeof Eloquent, name: string, typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<typeof Eloquent, never>;
@@ -175,7 +175,7 @@ declare class Eloquent {
     static getPossibleMorphTypesForModel(model: typeof Eloquent): string[];
     hasOneThrough(related: typeof Eloquent, through: typeof Eloquent, firstKey?: string, secondKey?: string, localKey?: string, secondLocalKey?: string): QueryBuilder<typeof Eloquent, never>;
     hasManyThrough(related: typeof Eloquent, through: typeof Eloquent, firstKey?: string, secondKey?: string, localKey?: string, secondLocalKey?: string): QueryBuilder<typeof Eloquent, never>;
-    belongsToMany(related: typeof Eloquent, table?: string, foreignPivotKey?: string, relatedPivotKey?: string, parentKey?: string, relatedKey?: string): QueryBuilder<typeof Eloquent, never>;
+    belongsToMany<T extends typeof Eloquent>(related: T, table?: string, foreignPivotKey?: string, relatedPivotKey?: string, parentKey?: string, relatedKey?: string): QueryBuilder<T, never>;
     static getProperty(key: string): any;
     through(relationship: string): ThroughBuilder;
     static query<T extends typeof Eloquent>(this: T): QueryBuilder<T, never>;
