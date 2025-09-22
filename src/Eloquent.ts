@@ -1,3 +1,19 @@
+/**
+ * READ-ONLY ORM (Intentional Design)
+ *
+ * - This ORM is designed strictly for read operations.
+ * - Mutating APIs (insert/update/delete, DDL, transactions, attach/detach/sync, save/create, etc.)
+ *   must NOT be added. Raw SQL is restricted to SELECT statements only.
+ * - A runtime guard rejects non-SELECT SQL (see ensureReadOnlySql/ensureReadOnlySnippet).
+ * - Initialization requires a pre-created connection; this library will not open new connections.
+ *
+ * Contributor notes:
+ * - If you add new raw-SQL entry points, call ensureReadOnlySql/ensureReadOnlySnippet.
+ * - Keep the public surface read-only unless an explicit, opt-in write mode is introduced.
+ * - Document any new APIs clearly as read-only.
+ *
+ * @readonly
+ */
 import type { z } from 'zod';
 type InferModel<M extends typeof Eloquent> = M extends { schema: infer S }
     ? S extends z.ZodTypeAny
@@ -26,6 +42,10 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
     private trashedMode: 'default' | 'with' | 'only' = 'default';
     private selectBindings: any[] = [];
     private pivotConfig?: { table: string; alias: string; columns: Set<string> };
+    private static readonly FORBIDDEN_SQL = [
+        'insert', 'update', 'delete', 'replace', 'create', 'drop', 'alter', 'truncate',
+        'grant', 'revoke', 'load data', 'into outfile'
+    ];
 
     constructor(model: M) {
         this.model = model;
@@ -186,48 +206,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
         return this.where('id', id).first();
     }
 
-    async insert(values: Record<string, any>): Promise<void> {
-        if (!Eloquent.connection) throw new Error('Database connection not initialized');
-        const table = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
-        const columns = Object.keys(values);
-        const placeholders = columns.map(() => '?').join(', ');
-        const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`;
-        const params = columns.map(col => values[col]);
-        await (Eloquent.connection as any).query(sql, params);
-    }
-
-    async insertGetId(values: Record<string, any>): Promise<number> {
-        if (!Eloquent.connection) throw new Error('Database connection not initialized');
-        const table = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
-        const columns = Object.keys(values);
-        const placeholders = columns.map(() => '?').join(', ');
-        const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`;
-        const params = columns.map(col => values[col]);
-        const [result] = await (Eloquent.connection as any).query(sql, params);
-        return (result as any).insertId;
-    }
-
-    async update(values: Record<string, any>): Promise<number> {
-        if (!Eloquent.connection) throw new Error('Database connection not initialized');
-        const table = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
-        const sets = Object.keys(values).map(col => `${col} = ?`).join(', ');
-        let sql = `UPDATE ${table} SET ${sets}`;
-        const whereClause = this.conditions.length > 0 ? this.buildWhereClause(this.conditions) : { sql: '', params: [] };
-        if (whereClause.sql) sql += ` WHERE ${whereClause.sql}`;
-        const params = [...Object.values(values), ...whereClause.params];
-        const [result] = await (Eloquent.connection as any).query(sql, params);
-        return result.affectedRows;
-    }
-
-    async delete(): Promise<number> {
-        if (!Eloquent.connection) throw new Error('Database connection not initialized');
-        const table = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
-        let sql = `DELETE FROM ${table}`;
-        const whereClause = this.conditions.length > 0 ? this.buildWhereClause(this.conditions) : { sql: '', params: [] };
-        if (whereClause.sql) sql += ` WHERE ${whereClause.sql}`;
-        const [result] = await (Eloquent.connection as any).query(sql, whereClause.params);
-        return result.affectedRows;
-    }
+    // Removed write operations (insert, insertGetId, update, delete) to keep ORM read-only
 
     private async aggregate(functionName: string, column: string): Promise<any> {
         if (!Eloquent.connection) throw new Error('Database connection not initialized');
@@ -244,6 +223,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
         }
         const whereClause = allConditions.length > 0 ? this.buildWhereClause(allConditions) : { sql: '', params: [] };
         if (whereClause.sql) sql += ` WHERE ${whereClause.sql}`;
+        this.ensureReadOnlySql(sql, 'aggregate');
         const [rows] = await (Eloquent.connection as any).query(sql, whereClause.params);
         return (rows as any[])[0].aggregate;
     }
@@ -359,17 +339,20 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
     }
 
     selectRaw(sql: string, bindings?: any[]): this {
+        this.ensureReadOnlySnippet(sql, 'selectRaw');
         this.selectColumns.push(sql);
         if (bindings && bindings.length) this.selectBindings.push(...bindings);
         return this;
     }
 
     whereRaw(sql: string, bindings?: any[]): this {
+        this.ensureReadOnlySnippet(sql, 'whereRaw');
         this.conditions.push({ operator: 'AND', type: 'raw', sql, bindings: bindings || [] });
         return this;
     }
 
     orWhereRaw(sql: string, bindings?: any[]): this {
+        this.ensureReadOnlySnippet(sql, 'orWhereRaw');
         this.conditions.push({ operator: 'OR', type: 'raw', sql, bindings: bindings || [] });
         return this;
     }
@@ -922,6 +905,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
             if (this.limitValue !== undefined) sql += ` LIMIT ${this.limitValue}`;
             if (this.offsetValue !== undefined) sql += ` OFFSET ${this.offsetValue}`;
         }
+        this.ensureReadOnlySql(sql, 'get');
         const [rows] = await (Eloquent.connection as any).query(sql, allParams);
         const instances = (rows as any[]).map(row => {
             const instance = new (this.model as any)() as InstanceType<M> & InferModel<M>;
@@ -990,6 +974,26 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
         }
         const params = [...this.selectBindings, ...where.params];
         return { sql, params };
+    }
+
+    private ensureReadOnlySnippet(snippet: string, context: string) {
+        const text = (snippet || '').toLowerCase();
+        if (text.includes(';')) {
+            throw new Error(`Read-only ORM violation in ${context}: semicolons are not allowed`);
+        }
+        for (const k of QueryBuilder.FORBIDDEN_SQL) {
+            if (text.includes(k)) {
+                throw new Error(`Read-only ORM violation in ${context}: disallowed keyword '${k}'`);
+            }
+        }
+    }
+
+    private ensureReadOnlySql(sql: string, context: string) {
+        const lc = sql.toLowerCase().trim();
+        if (!lc.startsWith('select')) {
+            throw new Error(`Read-only ORM violation in ${context}: only SELECT statements are permitted`);
+        }
+        this.ensureReadOnlySnippet(sql, context);
     }
 }
 
