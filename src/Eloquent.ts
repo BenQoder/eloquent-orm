@@ -61,6 +61,11 @@ type RelationTypes<T, K extends string> = {
     [P in K]: InferRelationType<T, P>
 };
 
+// Helpers to compute base relation name types from strings like
+// "posts:col1,col2" or "posts.comments" → "posts"
+type StripColumns<S extends string> = S extends `${infer R}:${string}` ? R : S;
+type BaseRelationName<S extends string> = StripColumns<S> extends `${infer R}.${string}` ? R : StripColumns<S>;
+
 type Condition = { operator: 'AND' | 'OR'; type: 'basic'; conditionOperator: string; column: string; value: any } | { operator: 'AND' | 'OR'; type: 'in' | 'not_in'; column: string; value: any[] } | { operator: 'AND' | 'OR'; type: 'null' | 'not_null'; column: string } | { operator: 'AND' | 'OR'; type: 'between' | 'not_between'; column: string; value: [any, any] } | { operator: 'AND' | 'OR'; type: 'raw'; sql: string; bindings: any[] } | { operator: 'AND' | 'OR'; group: Condition[] };
 
 class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends string = never> {
@@ -1613,32 +1618,38 @@ class Eloquent {
         return this;
     }
 
-    async loadForAll(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<any> {
+    // Overloads for better typing (returns this augmented with loaded relation keys)
+    loadForAll<K extends readonly string[]>(this: this, ...relations: K): Promise<
+        Omit<this, BaseRelationName<K[number]>> & { [P in BaseRelationName<K[number]> & keyof RelationsOf<this>]: RelationsOf<this>[P] }
+    >;
+    loadForAll<K extends string>(this: this, relations: K): Promise<
+        Omit<this, BaseRelationName<K>> & (
+            BaseRelationName<K> extends keyof RelationsOf<this>
+            ? { [P in BaseRelationName<K>]: RelationsOf<this>[P] }
+            : {}
+        )
+    >;
+    loadForAll<K extends readonly string[]>(this: this, relations: K): Promise<
+        Omit<this, BaseRelationName<K[number]>> & { [P in BaseRelationName<K[number]> & keyof RelationsOf<this>]: RelationsOf<this>[P] }
+    >;
+    loadForAll<K extends string[]>(this: this, relations: K): Promise<
+        Omit<this, BaseRelationName<K[number]>> & { [P in BaseRelationName<K[number]> & keyof RelationsOf<this>]: RelationsOf<this>[P] }
+    >;
+    loadForAll<R extends Record<string, string[] | ((query: QueryBuilder<any>) => void)>>(this: this, relations: R): Promise<
+        Omit<this, BaseRelationName<keyof R & string>> & { [P in BaseRelationName<keyof R & string> & keyof RelationsOf<this>]: RelationsOf<this>[P] }
+    >;
+    async loadForAll<R extends string | readonly string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>>(this: this, ...args: any[]): Promise<any> {
+        // Normalize arguments
+        const relations: any = args.length > 1 ? args : args[0];
+
         const collection: any[] | undefined = (this as any).__collection;
         const targets = Array.isArray(collection) && collection.length ? collection : [this];
         const model = this.constructor as typeof Eloquent;
         // Load only missing relations for the entire set
         await (model as any).loadMissing(targets as any, relations);
         // Return the loaded relation value(s) for this instance for convenience
-        if (typeof relations === 'string') {
-            const base = relations.split(':')[0].split('.')[0];
-            return (this as any)[base];
-        } else if (Array.isArray(relations)) {
-            const out: Record<string, any> = {};
-            for (const r of relations) {
-                const base = r.split(':')[0].split('.')[0];
-                out[base] = (this as any)[base];
-            }
-            return out;
-        } else if (relations && typeof relations === 'object') {
-            const out: Record<string, any> = {};
-            for (const key of Object.keys(relations)) {
-                const base = key.split(':')[0].split('.')[0];
-                out[base] = (this as any)[base];
-            }
-            return out;
-        }
-        return this;
+        // Return the instance with loaded relations available
+        return this as any;
     }
 
 

@@ -318,12 +318,48 @@ const products = await Product.query().limit(5).get();
 // Single relation across all items
 await products[0].loadForAll('business');
 
-// Multiple and nested relations
-await products[0].loadForAll(['business', 'business.orders', 'business.orders.items']);
+// Multiple and nested relations (variadic)
+await products[0].loadForAll('business', 'business.orders', 'business.orders.items');
 
-// Values now available on every product
-const ids = products.map((p) => p.business?.id ?? null);
+// Tuple/array literal form
+await products[0].loadForAll(['business', 'categories'] as const);
 ```
+
+Constraints and column selection:
+
+```typescript
+// Constrain relations
+await products[0].loadForAll({
+	business: (q) => q.where('status', 'active'),
+	'business.orders': (q) => q.where('total', '>', 100),
+});
+
+// Select columns
+await products[0].loadForAll({ business: ['id', 'name'] });
+```
+
+Typing behavior:
+
+```typescript
+// Returns instance augmented with the requested keys
+const p = products[0];
+const withBiz = await p.loadForAll('business');
+// withBiz: Product & { business: Business }
+
+const withMore = await p.loadForAll('business', 'categories');
+// withMore: Product & { business: Business; categories: ProductCategory[] }
+
+const rels = ['business', 'categories'] as const;
+const withTuple = await p.loadForAll(rels);
+// withTuple: Product & { business: Business; categories: ProductCategory[] }
+```
+
+Implementation notes:
+
+- The load is batched and respects constraints per relation key.
+- The method only augments with keys you request; nothing extra is added to the return type.
+
+````
 
 ### Constraining Eager Loads
 
@@ -342,7 +378,7 @@ const users = await User.query()
 		comments: (query) => query.where('approved', true),
 	})
 	.get();
-```
+````
 
 ### Selecting Specific Columns
 

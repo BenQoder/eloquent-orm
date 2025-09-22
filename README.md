@@ -358,13 +358,53 @@ const products = await Product.query().limit(5).get();
 await products[0].loadForAll('business');
 
 // Multiple or nested relations
-await products[0].loadForAll(['business', 'business.orders', 'business.orders.items']);
+await products[0].loadForAll('business', 'business.orders', 'business.orders.items');
+
+// Tuple/array literal also works (use `as const` for best typing)
+await products[0].loadForAll(['business', 'categories'] as const);
 
 // Now you can safely access loaded values
 const ids = products.map((p) => p.business?.id ?? null);
 ```
 
-The loader is batching-aware and marks relations as loaded, so repeated calls will not refetch already loaded data.
+Constraints and column selection:
+
+```typescript
+// Constrain relations with callbacks
+await products[0].loadForAll({
+	business: (q) => q.where('status', 'active'),
+	'business.orders': (q) => q.where('total', '>', 100),
+});
+
+// Select specific columns
+await products[0].loadForAll({ business: ['id', 'name'] });
+```
+
+Typing tips:
+
+- Single relation returns the instance augmented with that relation key:
+
+```ts
+const p = products[0];
+const withBiz = await p.loadForAll('business');
+// withBiz: Product & { business: Business }
+```
+
+- Multiple keys via variadic args:
+
+```ts
+const augmented = await p.loadForAll('business', 'categories');
+// augmented: Product & { business: Business; categories: ProductCategory[] }
+```
+
+- Arrays should be declared as const tuples to preserve literal keys:
+
+```ts
+const rels = ['business', 'categories'] as const;
+const augmented2 = await p.loadForAll(rels);
+```
+
+The loader batches queries and skips already-loaded relations to avoid redundant fetches.
 
 #### Lazy Loading
 

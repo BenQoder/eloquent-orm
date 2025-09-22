@@ -712,6 +712,14 @@ class QueryBuilder {
             for (const inst of instances) {
                 const target = map.get(inst[foreignKey]) || null;
                 inst[relationName] = target;
+                try {
+                    const holder = inst.__relations || {};
+                    if (!inst.__relations) {
+                        Object.defineProperty(inst, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                    }
+                    holder[relationName] = true;
+                }
+                catch { /* no-op */ }
             }
         }
         else if (type === 'hasMany') {
@@ -737,6 +745,14 @@ class QueryBuilder {
             }
             for (const inst of instances) {
                 inst[relationName] = map.get(inst[localKey]) || [];
+                try {
+                    const holder = inst.__relations || {};
+                    if (!inst.__relations) {
+                        Object.defineProperty(inst, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                    }
+                    holder[relationName] = true;
+                }
+                catch { /* no-op */ }
             }
         }
         else if (type === 'hasOne') {
@@ -760,6 +776,14 @@ class QueryBuilder {
             }
             for (const inst of instances) {
                 inst[relationName] = map.get(inst[localKey]) || null;
+                try {
+                    const holder = inst.__relations || {};
+                    if (!inst.__relations) {
+                        Object.defineProperty(inst, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                    }
+                    holder[relationName] = true;
+                }
+                catch { /* no-op */ }
             }
         }
         else if (type === 'morphOne') {
@@ -786,6 +810,14 @@ class QueryBuilder {
             }
             for (const inst of instances) {
                 inst[relationName] = map.get(inst[localKey]) || null;
+                try {
+                    const holder = inst.__relations || {};
+                    if (!inst.__relations) {
+                        Object.defineProperty(inst, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                    }
+                    holder[relationName] = true;
+                }
+                catch { /* no-op */ }
             }
         }
         else if (type === 'morphMany') {
@@ -814,6 +846,14 @@ class QueryBuilder {
             }
             for (const inst of instances) {
                 inst[relationName] = map.get(inst[localKey]) || [];
+                try {
+                    const holder = inst.__relations || {};
+                    if (!inst.__relations) {
+                        Object.defineProperty(inst, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                    }
+                    holder[relationName] = true;
+                }
+                catch { /* no-op */ }
             }
         }
         else if (type === 'morphTo') {
@@ -852,6 +892,14 @@ class QueryBuilder {
                 const map = new Map(relatedInstances.map((rel) => [rel.id, rel]));
                 for (const inst of list) {
                     inst[relationName] = map.get(inst[idColumn]) || null;
+                    try {
+                        const holder = inst.__relations || {};
+                        if (!inst.__relations) {
+                            Object.defineProperty(inst, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                        }
+                        holder[relationName] = true;
+                    }
+                    catch { /* no-op */ }
                 }
             }
         }
@@ -900,6 +948,14 @@ class QueryBuilder {
             }
             for (const inst of instances) {
                 inst[relationName] = map.get(inst[parentKey]) || [];
+                try {
+                    const holder = inst.__relations || {};
+                    if (!inst.__relations) {
+                        Object.defineProperty(inst, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                    }
+                    holder[relationName] = true;
+                }
+                catch { /* no-op */ }
             }
         }
     }
@@ -1043,6 +1099,20 @@ class QueryBuilder {
         await this.loadRelations(instances, this.withRelations || []);
         const collection = new Collection();
         collection.push(...instances);
+        // Link instances back to the collection so autoloading can scope to the entire set
+        for (const inst of instances) {
+            try {
+                Object.defineProperty(inst, '__collection', {
+                    value: collection,
+                    enumerable: false,
+                    configurable: true,
+                    writable: true
+                });
+            }
+            catch {
+                // no-op if defineProperty fails
+            }
+        }
         return collection;
     }
     buildSelectSql(options) {
@@ -1165,8 +1235,23 @@ class Collection extends Array {
         this.relationshipAutoloadingEnabled = true;
         // Mark all instances in this collection for auto-loading
         for (const instance of this) {
-            instance.__collectionAutoLoad = true;
-            instance.__collection = this;
+            try {
+                Object.defineProperty(instance, '__collectionAutoLoad', {
+                    value: true,
+                    enumerable: false,
+                    configurable: true,
+                    writable: true
+                });
+                Object.defineProperty(instance, '__collection', {
+                    value: this,
+                    enumerable: false,
+                    configurable: true,
+                    writable: true
+                });
+            }
+            catch {
+                // ignore
+            }
         }
         return this;
     }
@@ -1238,15 +1323,36 @@ class Eloquent {
         const relationFn = proto && proto[relationName];
         if (typeof relationFn !== 'function')
             return null;
+        if (relationName === 'constructor')
+            return null;
+        const makeStub = (meta) => {
+            const target = { __relation: meta };
+            let proxy;
+            proxy = new Proxy(target, {
+                get(t, prop) {
+                    if (prop in t)
+                        return t[prop];
+                    // Return a chainable no-op function for any method access
+                    return (..._args) => proxy;
+                }
+            });
+            return proxy;
+        };
         const fake = Object.create(proto);
-        fake.belongsTo = (related, foreignKey, ownerKey = 'id') => ({ __relation: { type: 'belongsTo', model: related, foreignKey, ownerKey } });
-        fake.hasMany = (related, foreignKey, localKey = 'id') => ({ __relation: { type: 'hasMany', model: related, foreignKey, localKey } });
-        fake.hasOne = (related, foreignKey, localKey = 'id') => ({ __relation: { type: 'hasOne', model: related, foreignKey, localKey } });
-        fake.morphOne = (related, name, typeColumn, idColumn, localKey = 'id') => ({ __relation: { type: 'morphOne', model: related, morphName: name, typeColumn, idColumn, localKey } });
-        fake.morphMany = (related, name, typeColumn, idColumn, localKey = 'id') => ({ __relation: { type: 'morphMany', model: related, morphName: name, typeColumn, idColumn, localKey } });
-        fake.morphTo = (name, typeColumn, idColumn) => ({ __relation: { type: 'morphTo', morphName: name, typeColumn, idColumn } });
-        fake.belongsToMany = (related, table, foreignPivotKey, relatedPivotKey, parentKey = 'id', relatedKey = 'id') => ({ __relation: { type: 'belongsToMany', model: related, table, foreignPivotKey, relatedPivotKey, parentKey, relatedKey } });
-        const result = relationFn.call(fake);
+        fake.belongsTo = (related, foreignKey, ownerKey = 'id') => makeStub({ type: 'belongsTo', model: related, foreignKey, ownerKey });
+        fake.hasMany = (related, foreignKey, localKey = 'id') => makeStub({ type: 'hasMany', model: related, foreignKey, localKey });
+        fake.hasOne = (related, foreignKey, localKey = 'id') => makeStub({ type: 'hasOne', model: related, foreignKey, localKey });
+        fake.morphOne = (related, name, typeColumn, idColumn, localKey = 'id') => makeStub({ type: 'morphOne', model: related, morphName: name, typeColumn, idColumn, localKey });
+        fake.morphMany = (related, name, typeColumn, idColumn, localKey = 'id') => makeStub({ type: 'morphMany', model: related, morphName: name, typeColumn, idColumn, localKey });
+        fake.morphTo = (name, typeColumn, idColumn) => makeStub({ type: 'morphTo', morphName: name, typeColumn, idColumn });
+        fake.belongsToMany = (related, table, foreignPivotKey, relatedPivotKey, parentKey = 'id', relatedKey = 'id') => makeStub({ type: 'belongsToMany', model: related, table, foreignPivotKey, relatedPivotKey, parentKey, relatedKey });
+        let result;
+        try {
+            result = relationFn.call(fake);
+        }
+        catch {
+            return null;
+        }
         if (result && typeof result === 'object' && '__relation' in result) {
             return result.__relation;
         }
@@ -1406,6 +1512,18 @@ class Eloquent {
         await this.constructor.loadMissing([this], relations);
         return this;
     }
+    async loadForAll(...args) {
+        // Normalize arguments
+        const relations = args.length > 1 ? args : args[0];
+        const collection = this.__collection;
+        const targets = Array.isArray(collection) && collection.length ? collection : [this];
+        const model = this.constructor;
+        // Load only missing relations for the entire set
+        await model.loadMissing(targets, relations);
+        // Return the loaded relation value(s) for this instance for convenience
+        // Return the instance with loaded relations available
+        return this;
+    }
     static async load(instances, relations) {
         if (instances.length === 0)
             return;
@@ -1431,6 +1549,14 @@ class Eloquent {
             for (const name of names) {
                 if (loaded[name] !== undefined) {
                     instance[name] = loaded[name];
+                    try {
+                        const holder = instance.__relations || {};
+                        if (!instance.__relations) {
+                            Object.defineProperty(instance, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                        }
+                        holder[name] = true;
+                    }
+                    catch { /* no-op */ }
                 }
             }
         }
