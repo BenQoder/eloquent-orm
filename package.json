@@ -1,6 +1,30 @@
 {
     "name": "@benqoder/eloquent-orm",
     "version": "0.1.0",
+    "description": "A powerful, type-safe, read-only ORM for TypeScript inspired by Laravel's Eloquent ORM",
+    "keywords": [
+        "orm",
+        "typescript",
+        "eloquent",
+        "database",
+        "mysql",
+        "postgresql",
+        "sqlite",
+        "zod",
+        "type-safe",
+        "read-only",
+        "query-builder"
+    ],
+    "author": "Ben Qoder",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/benqoder/eloquent-orm.git"
+    },
+    "bugs": {
+        "url": "https://github.com/benqoder/eloquent-orm/issues"
+    },
+    "homepage": "https://github.com/benqoder/eloquent-orm#readme",
     "type": "module",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
@@ -10,12 +34,29 @@
             "types": "./dist/index.d.ts"
         }
     },
+    "files": [
+        "dist/**/*",
+        "README.md",
+        "docs/**/*"
+    ],
     "scripts": {
         "build": "tsc -p tsconfig.json",
-        "clean": "rimraf dist"
+        "clean": "rimraf dist",
+        "dev": "tsc -p tsconfig.json --watch",
+        "prepublishOnly": "npm run clean && npm run build"
+    },
+    "peerDependencies": {
+        "zod": "^3.0.0 || ^4.0.0"
     },
     "dependencies": {
-        "mysql2": "^3.15.0",
-        "zod": "4.1.11"
+        "mysql2": "^3.15.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
+        "typescript": "^5.0.0",
+        "rimraf": "^5.0.0"
+    },
+    "engines": {
+        "node": ">=16.0.0"
     }
 }
