@@ -1038,10 +1038,12 @@ class QueryBuilder {
             const schema = this.model.schema;
             const data = schema ? schema.parse(row) : row;
             Object.assign(instance, data);
-            return instance;
+            return this.createProxiedInstance(instance);
         });
         await this.loadRelations(instances, this.withRelations || []);
-        return instances;
+        const collection = new Collection();
+        collection.push(...instances);
+        return collection;
     }
     buildSelectSql(options) {
         const includeOrderLimit = options?.includeOrderLimit !== false;
@@ -1111,12 +1113,67 @@ class QueryBuilder {
         }
         this.ensureReadOnlySnippet(sql, context);
     }
+    createProxiedInstance(instance) {
+        const relationConfigs = new Map();
+        // Get all possible relation names from the model
+        const proto = instance.constructor.prototype;
+        for (const key of Object.getOwnPropertyNames(proto)) {
+            const config = Eloquent.getRelationConfig(instance.constructor, key);
+            if (config) {
+                relationConfigs.set(key, config);
+            }
+        }
+        return new Proxy(instance, {
+            get: (target, prop) => {
+                // If it's a relationship and not loaded, check for auto-loading
+                if (relationConfigs.has(prop) && !(prop in target) && this.shouldAutoLoad(target, prop)) {
+                    this.autoLoadRelation(target, prop);
+                }
+                return target[prop];
+            }
+        });
+    }
+    shouldAutoLoad(instance, relationName) {
+        // Check if global auto-loading is enabled or instance belongs to a collection with auto-loading
+        const globalEnabled = Eloquent.automaticallyEagerLoadRelationshipsEnabled;
+        const collectionAutoLoad = instance.__collectionAutoLoad;
+        return globalEnabled || collectionAutoLoad;
+    }
+    async autoLoadRelation(instance, relationName) {
+        const collection = instance.__collection;
+        if (collection && collection.isRelationshipAutoloadingEnabled()) {
+            // Load for the entire collection
+            await this.loadRelations(collection, [relationName]);
+        }
+        else {
+            // Load for just this instance
+            await this.loadRelations([instance], [relationName]);
+        }
+    }
 }
 QueryBuilder.IN_CHUNK_SIZE = 1000;
 QueryBuilder.FORBIDDEN_SQL = [
     'insert', 'update', 'delete', 'replace', 'create', 'drop', 'alter', 'truncate',
     'grant', 'revoke', 'load data', 'into outfile'
 ];
+class Collection extends Array {
+    constructor() {
+        super(...arguments);
+        this.relationshipAutoloadingEnabled = false;
+    }
+    withRelationshipAutoloading() {
+        this.relationshipAutoloadingEnabled = true;
+        // Mark all instances in this collection for auto-loading
+        for (const instance of this) {
+            instance.__collectionAutoLoad = true;
+            instance.__collection = this;
+        }
+        return this;
+    }
+    isRelationshipAutoloadingEnabled() {
+        return this.relationshipAutoloadingEnabled || Eloquent.automaticallyEagerLoadRelationshipsEnabled;
+    }
+}
 class ThroughBuilder {
     constructor(instance, throughRelation) {
         this.instance = instance;
@@ -1146,6 +1203,12 @@ class ThroughBuilder {
     }
 }
 class Eloquent {
+    static automaticallyEagerLoadRelationships() {
+        Eloquent.automaticallyEagerLoadRelationshipsEnabled = true;
+    }
+    static isAutomaticallyEagerLoadRelationshipsEnabled() {
+        return Eloquent.automaticallyEagerLoadRelationshipsEnabled;
+    }
     static raw(value) {
         return value;
     }
@@ -1405,4 +1468,5 @@ Eloquent.hidden = [];
 Eloquent.with = [];
 Eloquent.connection = null;
 Eloquent.morphMap = {};
+Eloquent.automaticallyEagerLoadRelationshipsEnabled = false;
 export default Eloquent;

@@ -19,13 +19,13 @@ A one-to-one relationship is a very basic relation. For example, a `User` model 
 
 ```typescript
 class User extends Eloquent {
-    relationsTypes!: {
-        profile: Profile;
-    };
+	relationsTypes!: {
+		profile: Profile;
+	};
 
-    profile() {
-        return this.hasOne(Profile, 'user_id');
-    }
+	profile() {
+		return this.hasOne(Profile, 'user_id');
+	}
 }
 
 // Usage
@@ -39,13 +39,13 @@ The inverse of a `hasOne` relationship. For example, a `Profile` belongs to a `U
 
 ```typescript
 class Profile extends Eloquent {
-    relationsTypes!: {
-        user: User;
-    };
+	relationsTypes!: {
+		user: User;
+	};
 
-    user() {
-        return this.belongsTo(User, 'user_id');
-    }
+	user() {
+		return this.belongsTo(User, 'user_id');
+	}
 }
 
 // Usage
@@ -59,13 +59,13 @@ A one-to-many relationship is used to define relationships where a single model 
 
 ```typescript
 class Post extends Eloquent {
-    relationsTypes!: {
-        comments: Comment[];
-    };
+	relationsTypes!: {
+		comments: Comment[];
+	};
 
-    comments() {
-        return this.hasMany(Comment, 'post_id');
-    }
+	comments() {
+		return this.hasMany(Comment, 'post_id');
+	}
 }
 
 // Usage
@@ -79,23 +79,23 @@ Many-to-many relations are slightly more complicated than hasOne and hasMany rel
 
 ```typescript
 class User extends Eloquent {
-    relationsTypes!: {
-        roles: Role[];
-    };
+	relationsTypes!: {
+		roles: Role[];
+	};
 
-    roles() {
-        return this.belongsToMany(
-            Role,
-            'user_roles',      // pivot table
-            'user_id',         // foreign key for this model
-            'role_id'          // foreign key for related model
-        );
-    }
+	roles() {
+		return this.belongsToMany(
+			Role,
+			'user_roles', // pivot table
+			'user_id', // foreign key for this model
+			'role_id' // foreign key for related model
+		);
+	}
 }
 
 // Usage
 const user = await User.query().with('roles').first();
-console.log(user.roles.map(role => role.name)); // Role[] is properly typed
+console.log(user.roles.map((role) => role.name)); // Role[] is properly typed
 ```
 
 ## Advanced Relationships
@@ -106,37 +106,37 @@ Sometimes you need to retrieve a single related record from a one-to-many relati
 
 ```typescript
 class User extends Eloquent {
-    relationsTypes!: {
-        latestPost: Post;
-        oldestPost: Post;
-        mostPopularPost: Post;
-    };
+	relationsTypes!: {
+		latestPost: Post;
+		oldestPost: Post;
+		mostPopularPost: Post;
+	};
 
-    // Get the latest post
-    latestPost() {
-        return this.hasOneOfMany(Post, 'user_id', 'created_at', 'max');
-    }
+	// Get the latest post
+	latestPost() {
+		return this.hasOneOfMany(Post, 'user_id', 'created_at', 'max');
+	}
 
-    // Get the oldest post
-    oldestPost() {
-        return this.hasOneOfMany(Post, 'user_id', 'created_at', 'min');
-    }
+	// Get the oldest post
+	oldestPost() {
+		return this.hasOneOfMany(Post, 'user_id', 'created_at', 'min');
+	}
 
-    // Get most popular post (by views)
-    mostPopularPost() {
-        return this.hasOneOfMany(Post, 'user_id', 'views', 'max');
-    }
+	// Get most popular post (by views)
+	mostPopularPost() {
+		return this.hasOneOfMany(Post, 'user_id', 'views', 'max');
+	}
 }
 
 // Convenience methods
 class User extends Eloquent {
-    latestPost() {
-        return this.latestOfMany(Post, 'user_id');
-    }
+	latestPost() {
+		return this.latestOfMany(Post, 'user_id');
+	}
 
-    oldestPost() {
-        return this.oldestOfMany(Post, 'user_id');
-    }
+	oldestPost() {
+		return this.oldestOfMany(Post, 'user_id');
+	}
 }
 ```
 
@@ -146,20 +146,20 @@ The "has-one-through" relationship links models through a single intermediate re
 
 ```typescript
 class Country extends Eloquent {
-    relationsTypes!: {
-        capitalCity: City;
-    };
+	relationsTypes!: {
+		capitalCity: City;
+	};
 
-    capitalCity() {
-        return this.hasOneThrough(
-            City,           // final model
-            User,           // intermediate model
-            'country_id',   // foreign key on intermediate model
-            'city_id',      // foreign key on final model
-            'id',           // local key on this model
-            'id'            // local key on intermediate model
-        );
-    }
+	capitalCity() {
+		return this.hasOneThrough(
+			City, // final model
+			User, // intermediate model
+			'country_id', // foreign key on intermediate model
+			'city_id', // foreign key on final model
+			'id', // local key on this model
+			'id' // local key on intermediate model
+		);
+	}
 }
 ```
 
@@ -169,27 +169,27 @@ The "has-many-through" relationship provides a convenient shortcut for accessing
 
 ```typescript
 class Country extends Eloquent {
-    relationsTypes!: {
-        posts: Post[];
-    };
+	relationsTypes!: {
+		posts: Post[];
+	};
 
-    posts() {
-        return this.hasManyThrough(
-            Post,           // final model
-            User,           // intermediate model
-            'country_id',   // foreign key on intermediate model
-            'user_id',      // foreign key on final model
-            'id',           // local key on this model
-            'id'            // local key on intermediate model
-        );
-    }
+	posts() {
+		return this.hasManyThrough(
+			Post, // final model
+			User, // intermediate model
+			'country_id', // foreign key on intermediate model
+			'user_id', // foreign key on final model
+			'id', // local key on this model
+			'id' // local key on intermediate model
+		);
+	}
 }
 
 // Alternative using through() helper
 class Country extends Eloquent {
-    posts() {
-        return this.through('users').has('posts');
-    }
+	posts() {
+		return this.through('users').has('posts');
+	}
 }
 ```
 
@@ -202,46 +202,46 @@ A one-to-many polymorphic relation is similar to a simple one-to-many relation; 
 ```typescript
 // Comments can belong to both Post and Video
 class Comment extends Eloquent {
-    static schema = z.object({
-        id: z.number().int().optional(),
-        content: z.string(),
-        commentable_type: z.string(),
-        commentable_id: z.number().int(),
-    });
+	static schema = z.object({
+		id: z.number().int().optional(),
+		content: z.string(),
+		commentable_type: z.string(),
+		commentable_id: z.number().int(),
+	});
 
-    relationsTypes!: {
-        commentable: Post | Video; // Union type for polymorphic relation
-    };
+	relationsTypes!: {
+		commentable: Post | Video; // Union type for polymorphic relation
+	};
 
-    commentable() {
-        return this.morphTo('commentable', 'commentable_type', 'commentable_id');
-    }
+	commentable() {
+		return this.morphTo('commentable', 'commentable_type', 'commentable_id');
+	}
 }
 
 class Post extends Eloquent {
-    relationsTypes!: {
-        comments: Comment[];
-    };
+	relationsTypes!: {
+		comments: Comment[];
+	};
 
-    comments() {
-        return this.morphMany(Comment, 'commentable', 'commentable_type', 'commentable_id');
-    }
+	comments() {
+		return this.morphMany(Comment, 'commentable', 'commentable_type', 'commentable_id');
+	}
 }
 
 class Video extends Eloquent {
-    relationsTypes!: {
-        comments: Comment[];
-    };
+	relationsTypes!: {
+		comments: Comment[];
+	};
 
-    comments() {
-        return this.morphMany(Comment, 'commentable', 'commentable_type', 'commentable_id');
-    }
+	comments() {
+		return this.morphMany(Comment, 'commentable', 'commentable_type', 'commentable_id');
+	}
 }
 
 // Usage
 const post = await Post.query().with('comments').first();
-post.comments.forEach(comment => {
-    console.log(comment.content); // Comment is properly typed
+post.comments.forEach((comment) => {
+	console.log(comment.content); // Comment is properly typed
 });
 ```
 
@@ -251,24 +251,24 @@ Many-to-many polymorphic relations are slightly more complicated than morphOne a
 
 ```typescript
 class Tag extends Eloquent {
-    // Tags can be attached to posts, videos, etc.
-    posts() {
-        return this.morphedByMany(Post, 'taggable', 'tags');
-    }
+	// Tags can be attached to posts, videos, etc.
+	posts() {
+		return this.morphedByMany(Post, 'taggable', 'tags');
+	}
 
-    videos() {
-        return this.morphedByMany(Video, 'taggable', 'tags');
-    }
+	videos() {
+		return this.morphedByMany(Video, 'taggable', 'tags');
+	}
 }
 
 class Post extends Eloquent {
-    relationsTypes!: {
-        tags: Tag[];
-    };
+	relationsTypes!: {
+		tags: Tag[];
+	};
 
-    tags() {
-        return this.morphToMany(Tag, 'taggable', 'tags');
-    }
+	tags() {
+		return this.morphToMany(Tag, 'taggable', 'tags');
+	}
 }
 ```
 
@@ -287,36 +287,71 @@ const users = await User.query().with(['posts', 'profile']).get();
 const users = await User.query().with('posts.comments').get();
 ```
 
+### Automatic Relationship Autoloading
+
+Enable automatic autoloading globally or per-collection. When you access an unloaded relation, the ORM will lazy eager load that relation. If the instance belongs to a collection with autoloading enabled, it will load for the entire collection in a single batched query.
+
+Global:
+
+```typescript
+import Eloquent from '@benqoder/eloquent-orm';
+Eloquent.automaticallyEagerLoadRelationships();
+```
+
+Per-collection:
+
+```typescript
+const users = await User.query().get();
+users.withRelationshipAutoloading();
+console.log(users[0].posts.length); // triggers collection-wide load
+```
+
+Note: JS property access is synchronous; prefer an explicit load call before reading in tight loops.
+
+### Collection-wide Loading with loadForAll
+
+Load relations for the entire collection from any instance. Already-loaded relations are skipped.
+
+```typescript
+const products = await Product.query().limit(5).get();
+
+// Single relation across all items
+await products[0].loadForAll('business');
+
+// Multiple and nested relations
+await products[0].loadForAll(['business', 'business.orders', 'business.orders.items']);
+
+// Values now available on every product
+const ids = products.map((p) => p.business?.id ?? null);
+```
+
 ### Constraining Eager Loads
 
 ```typescript
 // Add constraints to eager loaded relations
-const users = await User.query().with({
-    posts: query => query.where('published', true).orderBy('created_at', 'desc')
-}).get();
+const users = await User.query()
+	.with({
+		posts: (query) => query.where('published', true).orderBy('created_at', 'desc'),
+	})
+	.get();
 
 // Multiple constrained relations
-const users = await User.query().with({
-    posts: query => query.where('published', true),
-    comments: query => query.where('approved', true)
-}).get();
+const users = await User.query()
+	.with({
+		posts: (query) => query.where('published', true),
+		comments: (query) => query.where('approved', true),
+	})
+	.get();
 ```
 
 ### Selecting Specific Columns
 
 ```typescript
 // Select specific columns from relations
-const users = await User.query()
-    .with('posts:id,title,created_at')
-    .get();
+const users = await User.query().with('posts:id,title,created_at').get();
 
 // Multiple relations with column selection
-const users = await User.query()
-    .with([
-        'posts:id,title,created_at',
-        'profile:id,bio,avatar'
-    ])
-    .get();
+const users = await User.query().with(['posts:id,title,created_at', 'profile:id,bio,avatar']).get();
 ```
 
 ### Conditional Eager Loading
@@ -324,15 +359,15 @@ const users = await User.query()
 ```typescript
 // Load relation based on condition
 const users = await User.query()
-    .when(includePosts, query => query.with('posts'))
-    .get();
+	.when(includePosts, (query) => query.with('posts'))
+	.get();
 
 // WithWhereHas - eager load and constrain the main query
 const users = await User.query()
-    .withWhereHas('posts', query => {
-        query.where('published', true);
-    })
-    .get();
+	.withWhereHas('posts', (query) => {
+		query.where('published', true);
+	})
+	.get();
 ```
 
 ### Lazy Eager Loading
@@ -347,7 +382,7 @@ await User.load(users, ['posts', 'profile']);
 
 // Load with constraints
 await User.load(users, {
-    posts: query => query.where('published', true)
+	posts: (query) => query.where('published', true),
 });
 
 // Load missing relations only
@@ -369,10 +404,7 @@ const users = await User.query().has('posts', '>', 3).get();
 const users = await User.query().doesntHave('posts').get();
 
 // Multiple relationship checks
-const users = await User.query()
-    .has('posts')
-    .has('profile')
-    .get();
+const users = await User.query().has('posts').has('profile').get();
 ```
 
 ### Querying Relationship Existence with Constraints
@@ -380,25 +412,24 @@ const users = await User.query()
 ```typescript
 // Get users that have published posts
 const users = await User.query()
-    .whereHas('posts', query => {
-        query.where('published', true);
-    })
-    .get();
+	.whereHas('posts', (query) => {
+		query.where('published', true);
+	})
+	.get();
 
 // Get users that don't have unpublished posts
 const users = await User.query()
-    .whereDoesntHave('posts', query => {
-        query.where('published', false);
-    })
-    .get();
+	.whereDoesntHave('posts', (query) => {
+		query.where('published', false);
+	})
+	.get();
 
 // Complex relationship queries
 const users = await User.query()
-    .whereHas('posts', query => {
-        query.where('published', true)
-             .where('views', '>', 1000);
-    })
-    .get();
+	.whereHas('posts', (query) => {
+		query.where('published', true).where('views', '>', 1000);
+	})
+	.get();
 ```
 
 ### Counting Related Models
@@ -409,44 +440,31 @@ const users = await User.query().withCount('posts').get();
 console.log(users[0].posts_count); // number
 
 // Multiple counts
-const users = await User.query()
-    .withCount(['posts', 'comments'])
-    .get();
+const users = await User.query().withCount(['posts', 'comments']).get();
 
 // Constrained counts
 const users = await User.query()
-    .withCount({
-        posts: query => query.where('published', true)
-    })
-    .get();
+	.withCount({
+		posts: (query) => query.where('published', true),
+	})
+	.get();
 ```
 
 ### Relationship Aggregates
 
 ```typescript
 // Sum related values
-const users = await User.query()
-    .withSum('posts', 'views')
-    .get();
+const users = await User.query().withSum('posts', 'views').get();
 console.log(users[0].posts_sum_views); // number
 
 // Average
-const users = await User.query()
-    .withAvg('posts', 'rating')
-    .get();
+const users = await User.query().withAvg('posts', 'rating').get();
 
 // Min/Max
-const users = await User.query()
-    .withMin('posts', 'created_at')
-    .withMax('posts', 'updated_at')
-    .get();
+const users = await User.query().withMin('posts', 'created_at').withMax('posts', 'updated_at').get();
 
 // Multiple aggregates
-const users = await User.query()
-    .withCount('posts')
-    .withSum('posts', 'views')
-    .withAvg('posts', 'rating')
-    .get();
+const users = await User.query().withCount('posts').withSum('posts', 'views').withAvg('posts', 'rating').get();
 ```
 
 ## TypeScript Integration
@@ -455,14 +473,14 @@ const users = await User.query()
 
 ```typescript
 class User extends Eloquent {
-    // Define all possible relations for type safety
-    relationsTypes!: {
-        posts: Post[];              // One-to-Many
-        profile: Profile;           // One-to-One
-        roles: Role[];              // Many-to-Many
-        latestPost: Post;           // One of Many
-        comments: Comment[];        // Polymorphic
-    };
+	// Define all possible relations for type safety
+	relationsTypes!: {
+		posts: Post[]; // One-to-Many
+		profile: Profile; // One-to-One
+		roles: Role[]; // Many-to-Many
+		latestPost: Post; // One of Many
+		comments: Comment[]; // Polymorphic
+	};
 }
 ```
 
@@ -489,26 +507,26 @@ const profile = await user.profile().first();
 
 ```typescript
 class User extends Eloquent {
-    relationsTypes!: {
-        // Standard relations
-        posts: Post[];
-        profile: Profile;
+	relationsTypes!: {
+		// Standard relations
+		posts: Post[];
+		profile: Profile;
 
-        // Polymorphic relations
-        notifications: (EmailNotification | SmsNotification)[];
+		// Polymorphic relations
+		notifications: (EmailNotification | SmsNotification)[];
 
-        // Conditional relations
-        publishedPosts: Post[];
-        draftPosts: Post[];
-    };
+		// Conditional relations
+		publishedPosts: Post[];
+		draftPosts: Post[];
+	};
 
-    publishedPosts() {
-        return this.hasMany(Post, 'user_id').where('published', true);
-    }
+	publishedPosts() {
+		return this.hasMany(Post, 'user_id').where('published', true);
+	}
 
-    draftPosts() {
-        return this.hasMany(Post, 'user_id').where('published', false);
-    }
+	draftPosts() {
+		return this.hasMany(Post, 'user_id').where('published', false);
+	}
 }
 ```
 
@@ -519,15 +537,15 @@ class User extends Eloquent {
 ```typescript
 // ✅ Good - Full type safety
 class User extends Eloquent {
-    relationsTypes!: {
-        posts: Post[];
-        profile: Profile;
-    };
+	relationsTypes!: {
+		posts: Post[];
+		profile: Profile;
+	};
 }
 
 // ❌ Bad - No type safety for relations
 class User extends Eloquent {
-    // No relationsTypes defined
+	// No relationsTypes defined
 }
 ```
 
@@ -536,24 +554,24 @@ class User extends Eloquent {
 ```typescript
 // ✅ Good
 class User extends Eloquent {
-    publishedPosts() {
-        return this.hasMany(Post, 'user_id').where('published', true);
-    }
+	publishedPosts() {
+		return this.hasMany(Post, 'user_id').where('published', true);
+	}
 
-    draftPosts() {
-        return this.hasMany(Post, 'user_id').where('published', false);
-    }
+	draftPosts() {
+		return this.hasMany(Post, 'user_id').where('published', false);
+	}
 }
 
 // ❌ Bad
 class User extends Eloquent {
-    posts1() {
-        return this.hasMany(Post, 'user_id').where('published', true);
-    }
+	posts1() {
+		return this.hasMany(Post, 'user_id').where('published', true);
+	}
 
-    posts2() {
-        return this.hasMany(Post, 'user_id').where('published', false);
-    }
+	posts2() {
+		return this.hasMany(Post, 'user_id').where('published', false);
+	}
 }
 ```
 
@@ -561,15 +579,13 @@ class User extends Eloquent {
 
 ```typescript
 // ✅ Good - Single query with eager loading
-const users = await User.query()
-    .with(['posts', 'profile'])
-    .get();
+const users = await User.query().with(['posts', 'profile']).get();
 
 // ❌ Bad - N+1 query problem
 const users = await User.query().get();
 for (const user of users) {
-    const posts = await user.posts().get(); // N queries
-    const profile = await user.profile().first(); // N queries
+	const posts = await user.posts().get(); // N queries
+	const profile = await user.profile().first(); // N queries
 }
 ```
 
@@ -578,20 +594,17 @@ for (const user of users) {
 ```typescript
 // ✅ Good - Efficient querying
 const activeUsers = await User.query()
-    .whereHas('posts', query => {
-        query.where('published', true)
-             .where('created_at', '>', '2023-01-01');
-    })
-    .withCount({
-        posts: query => query.where('published', true)
-    })
-    .get();
+	.whereHas('posts', (query) => {
+		query.where('published', true).where('created_at', '>', '2023-01-01');
+	})
+	.withCount({
+		posts: (query) => query.where('published', true),
+	})
+	.get();
 
 // ❌ Bad - Loading unnecessary data
 const users = await User.query().with('posts').get();
-const activeUsers = users.filter(user =>
-    user.posts.some(post => post.published && post.created_at > '2023-01-01')
-);
+const activeUsers = users.filter((user) => user.posts.some((post) => post.published && post.created_at > '2023-01-01'));
 ```
 
 This comprehensive relationships guide should help you understand and effectively use all relationship types in the Eloquent ORM!

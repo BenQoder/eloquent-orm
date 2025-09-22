@@ -133,10 +133,18 @@ declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith ex
     chunk(size: number, callback: (results: any[]) => Promise<void> | void): Promise<void>;
     private buildWhereClause;
     first(): Promise<WithRelations<InstanceType<M>, TWith> | null>;
-    get(): Promise<Array<WithRelations<InstanceType<M>, TWith>>>;
+    get(): Promise<Collection<WithRelations<InstanceType<M>, TWith>>>;
     private buildSelectSql;
     private ensureReadOnlySnippet;
     private ensureReadOnlySql;
+    private createProxiedInstance;
+    private shouldAutoLoad;
+    private autoLoadRelation;
+}
+declare class Collection<T extends Eloquent> extends Array<T> {
+    private relationshipAutoloadingEnabled;
+    withRelationshipAutoloading(): this;
+    isRelationshipAutoloadingEnabled(): boolean;
 }
 declare class ThroughBuilder {
     private instance;
@@ -152,6 +160,9 @@ declare class Eloquent {
     protected static with: string[];
     static connection: any;
     private static morphMap;
+    static automaticallyEagerLoadRelationshipsEnabled: boolean;
+    static automaticallyEagerLoadRelationships(): void;
+    static isAutomaticallyEagerLoadRelationshipsEnabled(): boolean;
     static raw(value: string): string;
     static init(connection: any, morphs?: Record<string, typeof Eloquent>): Promise<void>;
     static useConnection(connection: any, morphs?: Record<string, typeof Eloquent>): void;

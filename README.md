@@ -7,6 +7,7 @@ A powerful, type-safe, read-only ORM for TypeScript that allows you to access La
 **Laravel Database Access from Node.js**: This ORM is specifically designed for scenarios where you have a Laravel backend but need to access the same database from Node.js applications (microservices, analytics tools, reporting services, etc.).
 
 **Perfect for:**
+
 - Node.js microservices that need to read from Laravel databases
 - Analytics and reporting tools built in Node.js
 - API gateways that aggregate data from Laravel databases
@@ -56,6 +57,7 @@ This ORM enables a clean separation of concerns in multi-service architectures:
 - ✅ **Zod Integration**: Runtime validation with schema-based typing
 - 🔗 **Rich Relationships**: belongsTo, hasMany, hasOne, morphMany, belongsToMany
 - 🔍 **Advanced Querying**: Eager loading, constraints, aggregates, soft deletes
+- ⚡ **Automatic Relationship Autoloading**: Optional global or per-collection lazy eager loading
 - 🎛️ **Query Builder**: Fluent, chainable query interface
 - 📊 **Aggregations**: Built-in sum, count, avg, min, max support
 - 🚀 **Performance**: Optimized for read-heavy workloads
@@ -85,11 +87,11 @@ import mysql from 'mysql2/promise';
 
 // Connect to your Laravel database
 const connection = await mysql.createConnection({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USERNAME,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_DATABASE, // Same database as your Laravel app
-    port: parseInt(process.env.DB_PORT || '3306')
+	host: process.env.DB_HOST,
+	user: process.env.DB_USERNAME,
+	password: process.env.DB_PASSWORD,
+	database: process.env.DB_DATABASE, // Same database as your Laravel app
+	port: parseInt(process.env.DB_PORT || '3306'),
 });
 
 // Initialize Eloquent with the Laravel database connection
@@ -106,32 +108,32 @@ import { z } from 'zod';
 
 // This should mirror your Laravel User model
 class User extends Eloquent {
-    protected static table = 'users'; // Same table as Laravel
+	protected static table = 'users'; // Same table as Laravel
 
-    // Define Zod schema matching your Laravel migration/model
-    static schema = z.object({
-        id: z.number().int().optional(),
-        name: z.string(),
-        email: z.string().email(),
-        email_verified_at: z.union([z.string(), z.date()]).nullable().optional(),
-        created_at: z.union([z.string(), z.date()]).nullable().optional(),
-        updated_at: z.union([z.string(), z.date()]).nullable().optional(),
-    });
+	// Define Zod schema matching your Laravel migration/model
+	static schema = z.object({
+		id: z.number().int().optional(),
+		name: z.string(),
+		email: z.string().email(),
+		email_verified_at: z.union([z.string(), z.date()]).nullable().optional(),
+		created_at: z.union([z.string(), z.date()]).nullable().optional(),
+		updated_at: z.union([z.string(), z.date()]).nullable().optional(),
+	});
 
-    // Define relation types matching your Laravel relationships
-    relationsTypes!: {
-        posts: Post[];
-        profile: Profile;
-    };
+	// Define relation types matching your Laravel relationships
+	relationsTypes!: {
+		posts: Post[];
+		profile: Profile;
+	};
 
-    // Define relationships (same as your Laravel model)
-    posts() {
-        return this.hasMany(Post, 'user_id');
-    }
+	// Define relationships (same as your Laravel model)
+	posts() {
+		return this.hasMany(Post, 'user_id');
+	}
 
-    profile() {
-        return this.hasOne(Profile, 'user_id');
-    }
+	profile() {
+		return this.hasOne(Profile, 'user_id');
+	}
 }
 
 // Use declaration merging for automatic schema typing
@@ -153,11 +155,11 @@ const userWithProfile = await User.query().with(['posts', 'profile']).first();
 
 // Advanced querying
 const activeUsers = await User.query()
-    .where('status', 'active')
-    .whereNotNull('email_verified_at')
-    .orderBy('created_at', 'desc')
-    .limit(10)
-    .get();
+	.where('status', 'active')
+	.whereNotNull('email_verified_at')
+	.orderBy('created_at', 'desc')
+	.limit(10)
+	.get();
 ```
 
 ## 📚 Complete API Documentation
@@ -185,69 +187,61 @@ const count = await User.query().count();
 
 ```typescript
 // Basic where
-User.query().where('name', 'John')
-User.query().where('age', '>', 18)
-User.query().where('status', 'in', ['active', 'pending'])
+User.query().where('name', 'John');
+User.query().where('age', '>', 18);
+User.query().where('status', 'in', ['active', 'pending']);
 
 // Multiple conditions
-User.query()
-    .where('status', 'active')
-    .where('age', '>=', 18)
+User.query().where('status', 'active').where('age', '>=', 18);
 
 // Or conditions
-User.query()
-    .where('role', 'admin')
-    .orWhere('role', 'moderator')
+User.query().where('role', 'admin').orWhere('role', 'moderator');
 
 // Null checks
-User.query().whereNull('deleted_at')
-User.query().whereNotNull('email_verified_at')
+User.query().whereNull('deleted_at');
+User.query().whereNotNull('email_verified_at');
 
 // Between
-User.query().whereBetween('age', [18, 65])
+User.query().whereBetween('age', [18, 65]);
 
 // In/Not In
-User.query().whereIn('status', ['active', 'pending'])
-User.query().whereNotIn('role', ['banned', 'suspended'])
+User.query().whereIn('status', ['active', 'pending']);
+User.query().whereNotIn('role', ['banned', 'suspended']);
 
 // Like patterns
-User.query().where('name', 'like', '%john%')
+User.query().where('name', 'like', '%john%');
 
 // Raw conditions
-User.query().whereRaw('YEAR(created_at) = ?', [2023])
+User.query().whereRaw('YEAR(created_at) = ?', [2023]);
 ```
 
 #### Ordering & Limiting
 
 ```typescript
 // Order by
-User.query().orderBy('created_at', 'desc')
-User.query().orderBy('name') // defaults to 'asc'
+User.query().orderBy('created_at', 'desc');
+User.query().orderBy('name'); // defaults to 'asc'
 
 // Multiple order columns
-User.query()
-    .orderBy('status', 'asc')
-    .orderBy('created_at', 'desc')
+User.query().orderBy('status', 'asc').orderBy('created_at', 'desc');
 
 // Random order
-User.query().inRandomOrder()
+User.query().inRandomOrder();
 
 // Limit and offset
-User.query().limit(10)
-User.query().offset(20)
-User.query().limit(10).offset(20) // pagination
+User.query().limit(10);
+User.query().offset(20);
+User.query().limit(10).offset(20); // pagination
 ```
 
 #### Grouping & Aggregates
 
 ```typescript
 // Group by
-User.query().groupBy('status')
+User.query().groupBy('status');
 
 // Having
-User.query()
-    .groupBy('status')
-    .having('count(*)', '>', 5)
+User.query().groupBy('status').having('count(*)', '>', 5);
 
 // Aggregates
 const total = await User.query().count();
@@ -263,40 +257,40 @@ const max = await User.query().max('updated_at');
 
 ```typescript
 class User extends Eloquent {
-    // One-to-One
-    profile() {
-        return this.hasOne(Profile, 'user_id');
-    }
+	// One-to-One
+	profile() {
+		return this.hasOne(Profile, 'user_id');
+	}
 
-    // One-to-Many
-    posts() {
-        return this.hasMany(Post, 'user_id');
-    }
+	// One-to-Many
+	posts() {
+		return this.hasMany(Post, 'user_id');
+	}
 
-    // Inverse One-to-Many
-    category() {
-        return this.belongsTo(Category, 'category_id');
-    }
+	// Inverse One-to-Many
+	category() {
+		return this.belongsTo(Category, 'category_id');
+	}
 
-    // Many-to-Many
-    roles() {
-        return this.belongsToMany(Role, 'user_roles', 'user_id', 'role_id');
-    }
+	// Many-to-Many
+	roles() {
+		return this.belongsToMany(Role, 'user_roles', 'user_id', 'role_id');
+	}
 
-    // Polymorphic One-to-Many
-    comments() {
-        return this.morphMany(Comment, 'commentable', 'commentable_type', 'commentable_id');
-    }
+	// Polymorphic One-to-Many
+	comments() {
+		return this.morphMany(Comment, 'commentable', 'commentable_type', 'commentable_id');
+	}
 
-    // One of Many
-    latestPost() {
-        return this.hasOneOfMany(Post, 'user_id', 'created_at', 'max');
-    }
+	// One of Many
+	latestPost() {
+		return this.hasOneOfMany(Post, 'user_id', 'created_at', 'max');
+	}
 
-    // Through relationships
-    postComments() {
-        return this.through('posts').has('comments');
-    }
+	// Through relationships
+	postComments() {
+		return this.through('posts').has('comments');
+	}
 }
 ```
 
@@ -316,15 +310,61 @@ const users = await User.query().with('posts.comments').get();
 const users = await User.query().with('posts:id,title,created_at').get();
 
 // Conditional eager loading
-const users = await User.query().with({
-    posts: query => query.where('published', true)
-}).get();
+const users = await User.query()
+	.with({
+		posts: (query) => query.where('published', true),
+	})
+	.get();
 
 // Constrained eager loading
-const users = await User.query().withWhereHas('posts', query => {
-    query.where('published', true);
-}).get();
+const users = await User.query()
+	.withWhereHas('posts', (query) => {
+		query.where('published', true);
+	})
+	.get();
 ```
+
+#### Automatic Relationship Autoloading
+
+You can enable Laravel-like automatic relationship autoloading. When enabled, accessing an unloaded relation triggers a lazy eager load. If the instance belongs to a collection with autoloading enabled, the relation is loaded for the entire collection in one batched query.
+
+Global enable:
+
+```typescript
+import Eloquent from '@benqoder/eloquent-orm';
+Eloquent.automaticallyEagerLoadRelationships();
+```
+
+Per-collection:
+
+```typescript
+const users = await User.query().get();
+users.withRelationshipAutoloading();
+
+// Accessing users[0].posts will load posts for all users in the collection
+console.log(users[0].posts.length);
+```
+
+Note: Property access is synchronous in JavaScript; eager loading still occurs asynchronously. Prefer calling a load step before reading values in performance-critical paths.
+
+#### Collection-wide Loading with loadForAll
+
+To explicitly load relations across the entire collection from any instance:
+
+```typescript
+const products = await Product.query().limit(5).get();
+
+// Load for all items in the collection (only missing relations are fetched)
+await products[0].loadForAll('business');
+
+// Multiple or nested relations
+await products[0].loadForAll(['business', 'business.orders', 'business.orders.items']);
+
+// Now you can safely access loaded values
+const ids = products.map((p) => p.business?.id ?? null);
+```
+
+The loader is batching-aware and marks relations as loaded, so repeated calls will not refetch already loaded data.
 
 #### Lazy Loading
 
@@ -343,25 +383,25 @@ await user.loadMissing('posts');
 
 ```typescript
 // Query relationship existence
-User.query().has('posts')
-User.query().has('posts', '>', 5)
-User.query().doesntHave('posts')
+User.query().has('posts');
+User.query().has('posts', '>', 5);
+User.query().doesntHave('posts');
 
 // Query with relationship constraints
-User.query().whereHas('posts', query => {
-    query.where('published', true);
+User.query().whereHas('posts', (query) => {
+	query.where('published', true);
 });
 
-User.query().whereDoesntHave('posts', query => {
-    query.where('published', false);
+User.query().whereDoesntHave('posts', (query) => {
+	query.where('published', false);
 });
 
 // Relationship aggregates
-User.query().withCount('posts')
-User.query().withSum('posts', 'views')
-User.query().withAvg('posts', 'rating')
-User.query().withMax('posts', 'created_at')
-User.query().withMin('posts', 'created_at')
+User.query().withCount('posts');
+User.query().withSum('posts', 'views');
+User.query().withAvg('posts', 'rating');
+User.query().withMax('posts', 'created_at');
+User.query().withMin('posts', 'created_at');
 ```
 
 ### Advanced Features
@@ -370,7 +410,7 @@ User.query().withMin('posts', 'created_at')
 
 ```typescript
 class User extends Eloquent {
-    static softDeletes = true; // Enable soft delete support
+	static softDeletes = true; // Enable soft delete support
 }
 
 // Query including soft deleted
@@ -388,13 +428,14 @@ User.query().withoutTrashed().get();
 ```typescript
 // Conditional queries
 User.query().when(searchTerm, (query, term) => {
-    query.where('name', 'like', `%${term}%`);
+	query.where('name', 'like', `%${term}%`);
 });
 
 // Default fallback
-User.query().when(false,
-    query => query.where('active', true),
-    query => query.where('status', 'pending') // default
+User.query().when(
+	false,
+	(query) => query.where('active', true),
+	(query) => query.where('status', 'pending') // default
 );
 ```
 
@@ -402,13 +443,13 @@ User.query().when(false,
 
 ```typescript
 // Raw expressions
-User.query().select(User.raw('COUNT(*) as total'))
+User.query().select(User.raw('COUNT(*) as total'));
 
 // Raw where conditions
-User.query().whereRaw('YEAR(created_at) = ?', [2023])
+User.query().whereRaw('YEAR(created_at) = ?', [2023]);
 
 // Raw having conditions
-User.query().havingRaw('COUNT(*) > ?', [5])
+User.query().havingRaw('COUNT(*) > ?', [5]);
 ```
 
 #### Query Unions
@@ -424,16 +465,16 @@ const combinedUsers = activeUsers.union(premiumUsers).get();
 
 ```typescript
 // Process in chunks to manage memory
-await User.query().chunk(1000, users => {
-    users.forEach(user => {
-        // Process each user
-        console.log(user.name);
-    });
+await User.query().chunk(1000, (users) => {
+	users.forEach((user) => {
+		// Process each user
+		console.log(user.name);
+	});
 });
 
 // Async chunk processing
-await User.query().chunkAsync(1000, async users => {
-    await processUsers(users);
+await User.query().chunkAsync(1000, async (users) => {
+	await processUsers(users);
 });
 ```
 
@@ -445,16 +486,16 @@ await User.query().chunkAsync(1000, async users => {
 import { z } from 'zod';
 
 class Product extends Eloquent {
-    static schema = z.object({
-        id: z.number().int().optional(),
-        name: z.string(),
-        price: z.string(), // Stored as string for precision
-        weight: z.number().nullable().optional(),
-        available: z.number().nullable().optional(),
-        description: z.string().nullable().optional(),
-        created_at: z.union([z.string(), z.date()]).nullable().optional(),
-        updated_at: z.union([z.string(), z.date()]).nullable().optional(),
-    });
+	static schema = z.object({
+		id: z.number().int().optional(),
+		name: z.string(),
+		price: z.string(), // Stored as string for precision
+		weight: z.number().nullable().optional(),
+		available: z.number().nullable().optional(),
+		description: z.string().nullable().optional(),
+		created_at: z.union([z.string(), z.date()]).nullable().optional(),
+		updated_at: z.union([z.string(), z.date()]).nullable().optional(),
+	});
 }
 
 // Declaration merging for automatic typing
@@ -494,13 +535,13 @@ const profile: Profile | null = await user.profile().first();
 
 ```typescript
 class User extends Eloquent {
-    // Define relation return types for TypeScript
-    relationsTypes!: {
-        posts: Post[];
-        profile: Profile;
-        roles: Role[];
-        comments: Comment[];
-    };
+	// Define relation return types for TypeScript
+	relationsTypes!: {
+		posts: Post[];
+		profile: Profile;
+		roles: Role[];
+		comments: Comment[];
+	};
 }
 
 // With relations automatically include the loaded types
@@ -514,12 +555,12 @@ const user = await User.query().with('posts').first();
 
 ```typescript
 class User extends Eloquent {
-    protected static table = 'users';           // Table name
-    protected static fillable = ['name', 'email']; // Not used (read-only)
-    protected static hidden = ['password'];     // Hidden in JSON output
-    protected static with = ['profile'];        // Default eager loading
-    static softDeletes = true;                  // Enable soft deletes
-    static morphClass = 'App\\Models\\User';    // For polymorphic relations
+	protected static table = 'users'; // Table name
+	protected static fillable = ['name', 'email']; // Not used (read-only)
+	protected static hidden = ['password']; // Hidden in JSON output
+	protected static with = ['profile']; // Default eager loading
+	static softDeletes = true; // Enable soft deletes
+	static morphClass = 'App\\Models\\User'; // For polymorphic relations
 }
 ```
 
@@ -573,43 +614,43 @@ User.query().insert({...});      // No insert
 ```typescript
 // Product model
 class Product extends Eloquent {
-    static schema = z.object({
-        id: z.number().int().optional(),
-        business_id: z.number().int(),
-        name: z.string(),
-        price: z.string(),
-        available: z.number().nullable().optional(),
-    });
+	static schema = z.object({
+		id: z.number().int().optional(),
+		business_id: z.number().int(),
+		name: z.string(),
+		price: z.string(),
+		available: z.number().nullable().optional(),
+	});
 
-    relationsTypes!: {
-        business: Business;
-        categories: ProductCategory[];
-        medias: Media[];
-    };
+	relationsTypes!: {
+		business: Business;
+		categories: ProductCategory[];
+		medias: Media[];
+	};
 
-    business() {
-        return this.belongsTo(Business, 'business_id');
-    }
+	business() {
+		return this.belongsTo(Business, 'business_id');
+	}
 
-    categories() {
-        return this.belongsToMany(ProductCategory, 'category_product');
-    }
+	categories() {
+		return this.belongsToMany(ProductCategory, 'category_product');
+	}
 }
 
 // Query examples
 const products = await Product.query()
-    .with(['business', 'categories'])
-    .where('available', '>', 0)
-    .whereHas('business', query => {
-        query.where('status', 'active');
-    })
-    .orderBy('created_at', 'desc')
-    .limit(20)
-    .get();
+	.with(['business', 'categories'])
+	.where('available', '>', 0)
+	.whereHas('business', (query) => {
+		query.where('status', 'active');
+	})
+	.orderBy('created_at', 'desc')
+	.limit(20)
+	.get();
 
 const product = products[0];
-console.log(product.name);              // string
-console.log(product.business.name);     // string
+console.log(product.name); // string
+console.log(product.business.name); // string
 console.log(product.categories.length); // number
 ```
 
@@ -617,47 +658,47 @@ console.log(product.categories.length); // number
 
 ```typescript
 class Post extends Eloquent {
-    static schema = z.object({
-        id: z.number().int().optional(),
-        user_id: z.number().int(),
-        title: z.string(),
-        content: z.string(),
-        published: z.boolean(),
-        published_at: z.date().nullable().optional(),
-    });
+	static schema = z.object({
+		id: z.number().int().optional(),
+		user_id: z.number().int(),
+		title: z.string(),
+		content: z.string(),
+		published: z.boolean(),
+		published_at: z.date().nullable().optional(),
+	});
 
-    relationsTypes!: {
-        author: User;
-        comments: Comment[];
-        tags: Tag[];
-    };
+	relationsTypes!: {
+		author: User;
+		comments: Comment[];
+		tags: Tag[];
+	};
 
-    author() {
-        return this.belongsTo(User, 'user_id');
-    }
+	author() {
+		return this.belongsTo(User, 'user_id');
+	}
 
-    comments() {
-        return this.hasMany(Comment, 'post_id');
-    }
+	comments() {
+		return this.hasMany(Comment, 'post_id');
+	}
 
-    tags() {
-        return this.belongsToMany(Tag, 'post_tags');
-    }
+	tags() {
+		return this.belongsToMany(Tag, 'post_tags');
+	}
 }
 
 // Advanced querying
 const publishedPosts = await Post.query()
-    .with(['author', 'comments', 'tags'])
-    .where('published', true)
-    .whereNotNull('published_at')
-    .withCount('comments')
-    .orderBy('published_at', 'desc')
-    .chunk(100, posts => {
-        posts.forEach(post => {
-            console.log(`${post.title} by ${post.author.name}`);
-            console.log(`${post.comments_count} comments`);
-        });
-    });
+	.with(['author', 'comments', 'tags'])
+	.where('published', true)
+	.whereNotNull('published_at')
+	.withCount('comments')
+	.orderBy('published_at', 'desc')
+	.chunk(100, (posts) => {
+		posts.forEach((post) => {
+			console.log(`${post.title} by ${post.author.name}`);
+			console.log(`${post.comments_count} comments`);
+		});
+	});
 ```
 
 ## 🤝 Contributing

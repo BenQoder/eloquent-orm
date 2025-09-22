@@ -22,25 +22,25 @@ type RelationsOf<T> = T extends { relationsTypes: infer RT } ? RT : {};
 // Schema map from static schema (Zod) - infer from constructor
 type SchemaOf<T> = T extends { constructor: infer C }
     ? C extends { schema: infer S }
-        ? S extends z.ZodTypeAny
-            ? z.infer<S>
-            : never
-        : never
+    ? S extends z.ZodTypeAny
+    ? z.infer<S>
+    : never
+    : never
     : never;
 
 // Alternative: try to infer schema from model constructor directly
 type ModelSchemaType<M> = M extends { schema: infer S }
     ? S extends z.ZodTypeAny
-        ? z.infer<S>
-        : never
+    ? z.infer<S>
+    : never
     : never;
 // Final result type merges model instance with schema (fields) and declared relation properties
 type ResultType<M> = ModelInstance<M> & SchemaOf<ModelInstance<M>> & Partial<RelationsOf<ModelInstance<M>>>;
 // Helper to extract only the relation data we want to add
 type RelationData<M, K extends string> = {
     [P in K]: P extends keyof RelationsOf<M>
-        ? RelationsOf<M>[P]
-        : any;
+    ? RelationsOf<M>[P]
+    : any;
 };
 
 // Type that adds loaded relation data to the model
@@ -49,12 +49,12 @@ type WithRelations<M, K extends string> = M & RelationData<M, K>;
 // Helper to infer relation types from model methods
 type InferRelationType<T, K extends string> =
     T extends { prototype: { [P in K]: () => infer R } }
-        ? R extends { model: infer M }
-            ? M extends typeof Eloquent
-                ? InstanceType<M>
-                : any
-            : any
-        : any;
+    ? R extends { model: infer M }
+    ? M extends typeof Eloquent
+    ? InstanceType<M>
+    : any
+    : any
+    : any;
 
 // Map relation names to their actual types
 type RelationTypes<T, K extends string> = {
@@ -835,6 +835,13 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             for (const inst of instances) {
                 const target = map.get(inst[foreignKey]) || null;
                 (inst as any)[relationName] = target;
+                try {
+                    const holder = (inst as any).__relations || {};
+                    if (!(inst as any).__relations) {
+                        Object.defineProperty(inst as any, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                    }
+                    holder[relationName] = true;
+                } catch { /* no-op */ }
             }
         } else if (type === 'hasMany') {
             const RelatedModel = config.model;
@@ -856,6 +863,13 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             }
             for (const inst of instances) {
                 (inst as any)[relationName] = map.get(inst[localKey]) || [];
+                try {
+                    const holder = (inst as any).__relations || {};
+                    if (!(inst as any).__relations) {
+                        Object.defineProperty(inst as any, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                    }
+                    holder[relationName] = true;
+                } catch { /* no-op */ }
             }
         } else if (type === 'hasOne') {
             const RelatedModel = config.model;
@@ -876,6 +890,13 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             }
             for (const inst of instances) {
                 (inst as any)[relationName] = map.get(inst[localKey]) || null;
+                try {
+                    const holder = (inst as any).__relations || {};
+                    if (!(inst as any).__relations) {
+                        Object.defineProperty(inst as any, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                    }
+                    holder[relationName] = true;
+                } catch { /* no-op */ }
             }
         } else if (type === 'morphOne') {
             const RelatedModel = config.model;
@@ -899,6 +920,13 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             }
             for (const inst of instances) {
                 (inst as any)[relationName] = map.get(inst[localKey]) || null;
+                try {
+                    const holder = (inst as any).__relations || {};
+                    if (!(inst as any).__relations) {
+                        Object.defineProperty(inst as any, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                    }
+                    holder[relationName] = true;
+                } catch { /* no-op */ }
             }
         } else if (type === 'morphMany') {
             const RelatedModel = config.model;
@@ -923,6 +951,13 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             }
             for (const inst of instances) {
                 (inst as any)[relationName] = map.get(inst[localKey]) || [];
+                try {
+                    const holder = (inst as any).__relations || {};
+                    if (!(inst as any).__relations) {
+                        Object.defineProperty(inst as any, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                    }
+                    holder[relationName] = true;
+                } catch { /* no-op */ }
             }
         } else if (type === 'morphTo') {
             const name = config.morphName;
@@ -955,6 +990,13 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 const map = new Map(relatedInstances.map((rel: any) => [rel.id, rel]));
                 for (const inst of list) {
                     (inst as any)[relationName] = map.get(inst[idColumn]) || null;
+                    try {
+                        const holder = (inst as any).__relations || {};
+                        if (!(inst as any).__relations) {
+                            Object.defineProperty(inst as any, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                        }
+                        holder[relationName] = true;
+                    } catch { /* no-op */ }
                 }
             }
         } else if (type === 'belongsToMany') {
@@ -996,6 +1038,13 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             }
             for (const inst of instances) {
                 (inst as any)[relationName] = map.get(inst[parentKey]) || [];
+                try {
+                    const holder = (inst as any).__relations || {};
+                    if (!(inst as any).__relations) {
+                        Object.defineProperty(inst as any, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                    }
+                    holder[relationName] = true;
+                } catch { /* no-op */ }
             }
         }
     }
@@ -1076,7 +1125,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         return result as any ?? null;
     }
 
-    async get(): Promise<Array<WithRelations<InstanceType<M>, TWith>>> {
+    async get(): Promise<Collection<WithRelations<InstanceType<M>, TWith>>> {
         if (!Eloquent.connection) throw new Error('Database connection not initialized');
         const hasUnions = this.unions.length > 0;
         const main = this.buildSelectSql({ includeOrderLimit: !hasUnions });
@@ -1121,10 +1170,25 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             const schema = (this.model as any).schema as import('zod').ZodTypeAny | undefined;
             const data = schema ? schema.parse(row) : row;
             Object.assign(instance, data);
-            return instance;
+            return this.createProxiedInstance(instance);
         });
         await this.loadRelations(instances, this.withRelations || []);
-        return instances as any;
+        const collection = new Collection<WithRelations<InstanceType<M>, TWith>>();
+        collection.push(...instances);
+        // Link instances back to the collection so autoloading can scope to the entire set
+        for (const inst of instances) {
+            try {
+                Object.defineProperty(inst as any, '__collection', {
+                    value: collection,
+                    enumerable: false,
+                    configurable: true,
+                    writable: true
+                });
+            } catch {
+                // no-op if defineProperty fails
+            }
+        }
+        return collection;
     }
 
     private buildSelectSql(options?: { includeOrderLimit?: boolean }): { sql: string; params: any[] } {
@@ -1190,6 +1254,78 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         }
         this.ensureReadOnlySnippet(sql, context);
     }
+
+    private createProxiedInstance<T extends Eloquent>(instance: T): T {
+        const relationConfigs = new Map<string, any>();
+        // Get all possible relation names from the model
+        const proto = (instance.constructor as any).prototype;
+        for (const key of Object.getOwnPropertyNames(proto)) {
+            const config = Eloquent.getRelationConfig(instance.constructor as typeof Eloquent, key);
+            if (config) {
+                relationConfigs.set(key, config);
+            }
+        }
+
+        return new Proxy(instance, {
+            get: (target, prop: string) => {
+                // If it's a relationship and not loaded, check for auto-loading
+                if (relationConfigs.has(prop) && !(prop in target) && this.shouldAutoLoad(target, prop)) {
+                    this.autoLoadRelation(target, prop);
+                }
+                return (target as any)[prop];
+            }
+        });
+    }
+
+    private shouldAutoLoad(instance: Eloquent, relationName: string): boolean {
+        // Check if global auto-loading is enabled or instance belongs to a collection with auto-loading
+        const globalEnabled = (Eloquent as any).automaticallyEagerLoadRelationshipsEnabled;
+        const collectionAutoLoad = (instance as any).__collectionAutoLoad;
+        return globalEnabled || collectionAutoLoad;
+    }
+
+    private async autoLoadRelation(instance: Eloquent, relationName: string) {
+        const collection = (instance as any).__collection;
+        if (collection && collection.isRelationshipAutoloadingEnabled()) {
+            // Load for the entire collection
+            await this.loadRelations(collection, [relationName]);
+        } else {
+            // Load for just this instance
+            await this.loadRelations([instance], [relationName]);
+        }
+    }
+}
+
+class Collection<T extends Eloquent> extends Array<T> {
+    private relationshipAutoloadingEnabled: boolean = false;
+
+    withRelationshipAutoloading(): this {
+        this.relationshipAutoloadingEnabled = true;
+        // Mark all instances in this collection for auto-loading
+        for (const instance of this) {
+            try {
+                Object.defineProperty(instance as any, '__collectionAutoLoad', {
+                    value: true,
+                    enumerable: false,
+                    configurable: true,
+                    writable: true
+                });
+                Object.defineProperty(instance as any, '__collection', {
+                    value: this,
+                    enumerable: false,
+                    configurable: true,
+                    writable: true
+                });
+            } catch {
+                // ignore
+            }
+        }
+        return this;
+    }
+
+    isRelationshipAutoloadingEnabled(): boolean {
+        return this.relationshipAutoloadingEnabled || (Eloquent as any).automaticallyEagerLoadRelationshipsEnabled;
+    }
 }
 
 class ThroughBuilder {
@@ -1224,6 +1360,15 @@ class Eloquent {
     protected static with: string[] = [];
     static connection: any = null;
     private static morphMap: Record<string, typeof Eloquent> = {};
+    public static automaticallyEagerLoadRelationshipsEnabled: boolean = false;
+
+    static automaticallyEagerLoadRelationships(): void {
+        Eloquent.automaticallyEagerLoadRelationshipsEnabled = true;
+    }
+
+    static isAutomaticallyEagerLoadRelationshipsEnabled(): boolean {
+        return Eloquent.automaticallyEagerLoadRelationshipsEnabled;
+    }
 
     static raw(value: string): string {
         return value;
@@ -1256,13 +1401,26 @@ class Eloquent {
         const proto = (model as any).prototype;
         const relationFn = proto && proto[relationName];
         if (typeof relationFn !== 'function') return null;
+        if (relationName === 'constructor') return null;
+        const makeStub = (meta: any) => {
+            const target: any = { __relation: meta };
+            let proxy: any;
+            proxy = new Proxy(target, {
+                get(t: any, prop: string) {
+                    if (prop in t) return (t as any)[prop];
+                    // Return a chainable no-op function for any method access
+                    return (..._args: any[]) => proxy;
+                }
+            });
+            return proxy;
+        };
         const fake: any = Object.create(proto);
-        fake.belongsTo = (related: typeof Eloquent, foreignKey: string, ownerKey = 'id') => ({ __relation: { type: 'belongsTo', model: related, foreignKey, ownerKey } });
-        fake.hasMany = (related: typeof Eloquent, foreignKey: string, localKey = 'id') => ({ __relation: { type: 'hasMany', model: related, foreignKey, localKey } });
-        fake.hasOne = (related: typeof Eloquent, foreignKey: string, localKey = 'id') => ({ __relation: { type: 'hasOne', model: related, foreignKey, localKey } });
-        fake.morphOne = (related: typeof Eloquent, name: string, typeColumn?: string, idColumn?: string, localKey = 'id') => ({ __relation: { type: 'morphOne', model: related, morphName: name, typeColumn, idColumn, localKey } });
-        fake.morphMany = (related: typeof Eloquent, name: string, typeColumn?: string, idColumn?: string, localKey = 'id') => ({ __relation: { type: 'morphMany', model: related, morphName: name, typeColumn, idColumn, localKey } });
-        fake.morphTo = (name: string, typeColumn?: string, idColumn?: string) => ({ __relation: { type: 'morphTo', morphName: name, typeColumn, idColumn } });
+        fake.belongsTo = (related: typeof Eloquent, foreignKey: string, ownerKey = 'id') => makeStub({ type: 'belongsTo', model: related, foreignKey, ownerKey });
+        fake.hasMany = (related: typeof Eloquent, foreignKey: string, localKey = 'id') => makeStub({ type: 'hasMany', model: related, foreignKey, localKey });
+        fake.hasOne = (related: typeof Eloquent, foreignKey: string, localKey = 'id') => makeStub({ type: 'hasOne', model: related, foreignKey, localKey });
+        fake.morphOne = (related: typeof Eloquent, name: string, typeColumn?: string, idColumn?: string, localKey = 'id') => makeStub({ type: 'morphOne', model: related, morphName: name, typeColumn, idColumn, localKey });
+        fake.morphMany = (related: typeof Eloquent, name: string, typeColumn?: string, idColumn?: string, localKey = 'id') => makeStub({ type: 'morphMany', model: related, morphName: name, typeColumn, idColumn, localKey });
+        fake.morphTo = (name: string, typeColumn?: string, idColumn?: string) => makeStub({ type: 'morphTo', morphName: name, typeColumn, idColumn });
         fake.belongsToMany = (
             related: typeof Eloquent,
             table?: string,
@@ -1270,8 +1428,13 @@ class Eloquent {
             relatedPivotKey?: string,
             parentKey = 'id',
             relatedKey = 'id'
-        ) => ({ __relation: { type: 'belongsToMany', model: related, table, foreignPivotKey, relatedPivotKey, parentKey, relatedKey } });
-        const result = relationFn.call(fake);
+        ) => makeStub({ type: 'belongsToMany', model: related, table, foreignPivotKey, relatedPivotKey, parentKey, relatedKey });
+        let result: any;
+        try {
+            result = relationFn.call(fake);
+        } catch {
+            return null;
+        }
         if (result && typeof result === 'object' && '__relation' in result) {
             return (result as any).__relation;
         }
@@ -1450,6 +1613,35 @@ class Eloquent {
         return this;
     }
 
+    async loadForAll(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<any> {
+        const collection: any[] | undefined = (this as any).__collection;
+        const targets = Array.isArray(collection) && collection.length ? collection : [this];
+        const model = this.constructor as typeof Eloquent;
+        // Load only missing relations for the entire set
+        await (model as any).loadMissing(targets as any, relations);
+        // Return the loaded relation value(s) for this instance for convenience
+        if (typeof relations === 'string') {
+            const base = relations.split(':')[0].split('.')[0];
+            return (this as any)[base];
+        } else if (Array.isArray(relations)) {
+            const out: Record<string, any> = {};
+            for (const r of relations) {
+                const base = r.split(':')[0].split('.')[0];
+                out[base] = (this as any)[base];
+            }
+            return out;
+        } else if (relations && typeof relations === 'object') {
+            const out: Record<string, any> = {};
+            for (const key of Object.keys(relations)) {
+                const base = key.split(':')[0].split('.')[0];
+                out[base] = (this as any)[base];
+            }
+            return out;
+        }
+        return this;
+    }
+
+
     static async load(instances: Eloquent[], relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<void> {
         if (instances.length === 0) return;
 
@@ -1479,6 +1671,13 @@ class Eloquent {
             for (const name of names) {
                 if ((loaded as any)[name] !== undefined) {
                     (instance as any)[name] = (loaded as any)[name];
+                    try {
+                        const holder = (instance as any).__relations || {};
+                        if (!(instance as any).__relations) {
+                            Object.defineProperty(instance as any, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                        }
+                        holder[name] = true;
+                    } catch { /* no-op */ }
                 }
             }
         }
