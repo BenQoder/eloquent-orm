@@ -1,4 +1,3 @@
-import { createConnection } from "mysql2/promise";
 import type { z } from 'zod';
 type InferModel<M extends typeof Eloquent> = M extends { schema: infer S }
     ? S extends z.ZodTypeAny
@@ -1030,15 +1029,16 @@ class Eloquent {
         return value;
     }
 
-    static async init(env: any, morphs?: Record<string, typeof Eloquent>) {
-        Eloquent.connection = await createConnection({
-            host: env.HYPERDRIVE.host,
-            user: env.HYPERDRIVE.user,
-            password: env.HYPERDRIVE.password,
-            database: env.HYPERDRIVE.database,
-            port: Number(env.HYPERDRIVE.port),
-            disableEval: true
-        });
+    static async init(connection: any, morphs?: Record<string, typeof Eloquent>) {
+        // Require an already-created connection
+        Eloquent.connection = connection;
+        if (morphs) {
+            Eloquent.morphMap = { ...morphs };
+        }
+    }
+
+    static useConnection(connection: any, morphs?: Record<string, typeof Eloquent>) {
+        Eloquent.connection = connection;
         if (morphs) {
             Eloquent.morphMap = { ...morphs };
         }
