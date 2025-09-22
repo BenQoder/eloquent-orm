@@ -93,6 +93,15 @@ declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
     orWhereRaw(sql: string, bindings?: any[]): this;
     when(condition: any, callback: (query: QueryBuilder<any>) => void, defaultCallback?: (query: QueryBuilder<any>) => void): this;
     whereHas(relation: string, callback?: (query: QueryBuilder) => void): this;
+    orWhereHas(relation: string, callback?: (query: QueryBuilder) => void): this;
+    doesntHave(relation: string, callback?: (query: QueryBuilder) => void): this;
+    whereDoesntHave(relation: string, callback?: (query: QueryBuilder) => void): this;
+    whereBelongsTo(model: any | any[], relation?: string): this;
+    private getBelongsToForeignKey;
+    whereRelation(relation: string, callback?: (query: QueryBuilder) => void): this;
+    orWhereRelation(relation: string, callback?: (query: QueryBuilder) => void): this;
+    whereHasMorph(relation: string, modelType: string | typeof Eloquent, callback?: (query: QueryBuilder) => void): this;
+    whereMorphedTo(relation: string, model: any): this;
     has(relation: string): this;
     withCount(relations: string | string[] | Record<string, (query: QueryBuilder) => void>): this;
     private buildCountSubquery;

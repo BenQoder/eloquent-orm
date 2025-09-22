@@ -372,6 +372,85 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent> {
         return this;
     }
 
+    orWhereHas(relation: string, callback?: (query: QueryBuilder) => void): this {
+        const exists = this.buildHasSubquery(relation, callback);
+        this.orWhereRaw(`EXISTS (${exists.sql})`, exists.params);
+        return this;
+    }
+
+    doesntHave(relation: string, callback?: (query: QueryBuilder) => void): this {
+        const exists = this.buildHasSubquery(relation, callback);
+        this.whereRaw(`NOT EXISTS (${exists.sql})`, exists.params);
+        return this;
+    }
+
+    whereDoesntHave(relation: string, callback?: (query: QueryBuilder) => void): this {
+        return this.doesntHave(relation, callback);
+    }
+
+    whereBelongsTo(model: any | any[], relation?: string): this {
+        if (Array.isArray(model)) {
+            const ids = model.map(m => m.id).filter(id => id !== null && id !== undefined);
+            if (ids.length === 0) {
+                this.whereRaw('0=1'); // No matches
+                return this;
+            }
+            return this.whereIn(this.getBelongsToForeignKey(relation), ids);
+        } else {
+            return this.where(this.getBelongsToForeignKey(relation), model.id);
+        }
+    }
+
+    private getBelongsToForeignKey(relation?: string): string {
+        if (relation) {
+            const cfg = (Eloquent as any).getRelationConfig(this.model, relation);
+            if (cfg && cfg.type === 'belongsTo') {
+                return cfg.foreignKey;
+            }
+            throw new Error(`Relation '${relation}' is not a belongsTo relationship`);
+        } else {
+            // Infer from model type - this is a simplified version
+            // In a full implementation, you'd need to map model types to foreign keys
+            throw new Error('Relation name must be provided for whereBelongsTo when not inferring from model type');
+        }
+    }
+
+    whereRelation(relation: string, callback?: (query: QueryBuilder) => void): this {
+        return this.whereHas(relation, callback);
+    }
+
+    orWhereRelation(relation: string, callback?: (query: QueryBuilder) => void): this {
+        return this.orWhereHas(relation, callback);
+    }
+
+    whereHasMorph(relation: string, modelType: string | typeof Eloquent, callback?: (query: QueryBuilder) => void): this {
+        const cfg = (Eloquent as any).getRelationConfig(this.model, relation);
+        if (!cfg || (cfg.type !== 'morphMany' && cfg.type !== 'morphOne')) {
+            throw new Error(`Relation '${relation}' is not a morph relationship`);
+        }
+        const typeValue = typeof modelType === 'string' ? modelType : Eloquent.getMorphTypeForModel(modelType);
+        const exists = this.buildHasSubquery(relation, callback);
+        // Modify the subquery to filter by morph type
+        const typeColumn = cfg.typeColumn || `${cfg.morphName}_type`;
+        const modifiedSql = exists.sql.replace(
+            `FROM ${cfg.model.name.toLowerCase()}s`,
+            `FROM ${cfg.model.name.toLowerCase()}s WHERE ${cfg.model.name.toLowerCase()}s.${typeColumn} = ?`
+        );
+        this.whereRaw(`EXISTS (${modifiedSql})`, [typeValue, ...exists.params]);
+        return this;
+    }
+
+    whereMorphedTo(relation: string, model: any): this {
+        const cfg = (Eloquent as any).getRelationConfig(this.model, relation);
+        if (!cfg || cfg.type !== 'morphTo') {
+            throw new Error(`Relation '${relation}' is not a morphTo relationship`);
+        }
+        const typeColumn = cfg.typeColumn || `${cfg.morphName}_type`;
+        const idColumn = cfg.idColumn || `${cfg.morphName}_id`;
+        const typeValue = Eloquent.getMorphTypeForModel(model.constructor as typeof Eloquent);
+        return this.where(typeColumn, typeValue).where(idColumn, model.id);
+    }
+
     has(relation: string): this {
         return this.whereHas(relation);
     }
