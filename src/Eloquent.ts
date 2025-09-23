@@ -836,6 +836,14 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 if (cb) cb(qb);
                 return qb.get();
             });
+            // Share a collection among related instances for nested propagation
+            const relatedCollection = new Collection<any>();
+            for (const rel of relatedInstances as any[]) relatedCollection.push(rel);
+            for (const rel of relatedInstances as any[]) {
+                try {
+                    Object.defineProperty(rel as any, '__collection', { value: relatedCollection, enumerable: false, configurable: true, writable: true });
+                } catch { }
+            }
             const map = new Map(relatedInstances.map((rel: any) => [rel[ownerKey], rel]));
             for (const inst of instances) {
                 const target = map.get(inst[foreignKey]) || null;
@@ -860,6 +868,13 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 if (cb) cb(qb);
                 return qb.get();
             });
+            const relatedCollection = new Collection<any>();
+            for (const rel of relatedInstances as any[]) relatedCollection.push(rel);
+            for (const rel of relatedInstances as any[]) {
+                try {
+                    Object.defineProperty(rel as any, '__collection', { value: relatedCollection, enumerable: false, configurable: true, writable: true });
+                } catch { }
+            }
             const map = new Map<any, any[]>();
             for (const rel of relatedInstances as any[]) {
                 const key = rel[foreignKey];
@@ -888,6 +903,13 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 if (cb) cb(qb);
                 return qb.get();
             });
+            const relatedCollection = new Collection<any>();
+            for (const rel of relatedInstances as any[]) relatedCollection.push(rel);
+            for (const rel of relatedInstances as any[]) {
+                try {
+                    Object.defineProperty(rel as any, '__collection', { value: relatedCollection, enumerable: false, configurable: true, writable: true });
+                } catch { }
+            }
             const map = new Map<any, any>();
             for (const rel of relatedInstances as any[]) {
                 const key = rel[foreignKey];
@@ -918,6 +940,13 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 if (cb) cb(qb);
                 return qb.get();
             });
+            const relatedCollection = new Collection<any>();
+            for (const rel of relatedInstances as any[]) relatedCollection.push(rel);
+            for (const rel of relatedInstances as any[]) {
+                try {
+                    Object.defineProperty(rel as any, '__collection', { value: relatedCollection, enumerable: false, configurable: true, writable: true });
+                } catch { }
+            }
             const map = new Map<any, any>();
             for (const rel of relatedInstances as any[]) {
                 const key = rel[idColumn];
@@ -948,6 +977,13 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 if (cb) cb(qb);
                 return qb.get();
             });
+            const relatedCollection = new Collection<any>();
+            for (const rel of relatedInstances as any[]) relatedCollection.push(rel);
+            for (const rel of relatedInstances as any[]) {
+                try {
+                    Object.defineProperty(rel as any, '__collection', { value: relatedCollection, enumerable: false, configurable: true, writable: true });
+                } catch { }
+            }
             const map = new Map<any, any[]>();
             for (const rel of relatedInstances as any[]) {
                 const key = rel[idColumn];
@@ -992,6 +1028,13 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                     if (cb) cb(qb);
                     return qb.get();
                 });
+                const relatedCollection = new Collection<any>();
+                for (const rel of relatedInstances as any[]) relatedCollection.push(rel);
+                for (const rel of relatedInstances as any[]) {
+                    try {
+                        Object.defineProperty(rel as any, '__collection', { value: relatedCollection, enumerable: false, configurable: true, writable: true });
+                    } catch { }
+                }
                 const map = new Map(relatedInstances.map((rel: any) => [rel.id, rel]));
                 for (const inst of list) {
                     (inst as any)[relationName] = map.get(inst[idColumn]) || null;
@@ -1032,6 +1075,13 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 if (cb) cb(qb);
                 return qb.get();
             });
+            const relatedCollection = new Collection<any>();
+            for (const rel of rows as any[]) relatedCollection.push(rel);
+            for (const rel of rows as any[]) {
+                try {
+                    Object.defineProperty(rel as any, '__collection', { value: relatedCollection, enumerable: false, configurable: true, writable: true });
+                } catch { }
+            }
             const map = new Map<any, any[]>();
             for (const rel of rows as any[]) {
                 const owner = (rel as any)['__pivot_fk'];
