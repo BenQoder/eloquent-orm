@@ -2200,10 +2200,30 @@ class Eloquent {
         const collection: any[] | undefined = (this as any).__collection;
         const targets = Array.isArray(collection) && collection.length ? collection : [this];
 
-        // Add to batch instead of loading immediately
-        (Eloquent as any).addToLoadBatch(targets, relations);
+        // Parse relation names to check if already loaded
+        const relationNames = (this.constructor as typeof Eloquent).parseRelationNames(relations);
+        const firstTarget = targets[0];
+        const alreadyLoaded = relationNames.every(name => {
+            const rel = (firstTarget as any).__relations || {};
+            return name in rel;
+        });
 
-        // Return the loaded relation value(s) for this instance for convenience
+        // Debug logging for loadForAll behavior
+        if ((Eloquent as any).debugEnabled) {
+            const targetCount = targets.length;
+            const instanceId = (this as any).id || 'unknown';
+            if (alreadyLoaded) {
+                (Eloquent as any).debugLogger(`loadForAll: Using cached data for relations [${relationNames.join(', ')}] on ${this.constructor.name}#${instanceId} (${targetCount} instances in collection)`);
+            } else {
+                (Eloquent as any).debugLogger(`loadForAll: Making fresh DB call for relations [${relationNames.join(', ')}] on ${this.constructor.name}#${instanceId} (loading for ${targetCount} instances)`);
+            }
+        }
+
+        // If not already loaded, load immediately for all targets
+        if (!alreadyLoaded) {
+            await (this.constructor as typeof Eloquent).load(targets, relations);
+        }
+
         // Return the instance with loaded relations available
         return this as any;
     }
