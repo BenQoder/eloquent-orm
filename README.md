@@ -60,6 +60,7 @@ This ORM enables a clean separation of concerns in multi-service architectures:
 - ⚡ **Automatic Relationship Autoloading**: Optional global or per-collection lazy eager loading
 - 🎛️ **Query Builder**: Fluent, chainable query interface
 - 📊 **Aggregations**: Built-in sum, count, avg, min, max support
+- 🐛 **Debug Logging**: Built-in query logging with execution details
 - 🚀 **Performance**: Optimized for read-heavy workloads
 
 ## 📦 Installation
@@ -160,6 +161,41 @@ const activeUsers = await User.query()
 	.orderBy('created_at', 'desc')
 	.limit(10)
 	.get();
+```
+
+## 🐛 Debug Logging
+
+Enable detailed query logging to monitor database operations:
+
+```typescript
+import Eloquent from '@benqoder/eloquent-orm';
+
+// Enable debug logging with default console logger
+Eloquent.enableDebug();
+
+// Or provide custom logger
+Eloquent.enableDebug((message, data) => {
+	console.log(`[SQL Debug] ${message}`, data);
+});
+
+// Disable debug logging
+Eloquent.disableDebug();
+```
+
+**Debug Output Example:**
+
+```typescript
+[DEBUG] Executing query {
+  "sql": "SELECT * FROM users WHERE status = ? LIMIT 10",
+  "params": ["active"],
+  "hasUnions": false
+}
+
+[DEBUG] Query completed {
+  "resultCount": 5,
+  "hasRelations": true,
+  "relations": ["posts", "profile"]
+}
 ```
 
 ## 📚 Complete API Documentation

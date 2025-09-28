@@ -93,6 +93,14 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         'grant', 'revoke', 'load data', 'into outfile'
     ];
 
+
+
+    private debugLog(message: string, data?: any): void {
+        if (Eloquent.debugEnabled) {
+            Eloquent.debugLogger(message, data);
+        }
+    }
+
     constructor(model: M) {
         this.model = model;
     }
@@ -304,9 +312,18 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         }
         const whereClause = allConditions.length > 0 ? this.buildWhereClause(allConditions) : { sql: '', params: [] };
         if (whereClause.sql) sql += ` WHERE ${whereClause.sql}`;
+
+        // Debug logging
+        this.debugLog('Executing aggregate query', { sql, params: whereClause.params, function: functionName, column });
+
         this.ensureReadOnlySql(sql, 'aggregate');
         const [rows] = await (Eloquent.connection as any).query(sql, whereClause.params);
-        return (rows as any[])[0].aggregate;
+        const result = (rows as any[])[0].aggregate;
+
+        // Debug logging - aggregate completed
+        this.debugLog('Aggregate query completed', { function: functionName, column, result });
+
+        return result;
     }
 
     where(column: string, value: any): this;
@@ -842,6 +859,9 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
     async loadRelations(instances: any[], relations: string[], model?: typeof Eloquent, prefix?: string) {
         if (!relations || relations.length === 0) return;
         const currentModel = model || this.model;
+
+        // Debug logging
+        this.debugLog('Loading relations', { instanceCount: instances.length, relations, model: currentModel.name });
         for (const relation of relations) {
             const parts = relation.split('.');
             const relationKey = parts[0];
@@ -1284,6 +1304,9 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         const main = this.buildSelectSql({ includeOrderLimit: !hasUnions });
         let sql = main.sql;
         let allParams = [...main.params];
+
+        // Debug logging
+        this.debugLog('Executing query', { sql, params: allParams, hasUnions });
         if (hasUnions) {
             for (const union of this.unions) {
                 const unionData = union.query.buildSelectSql({ includeOrderLimit: false });
@@ -1352,6 +1375,14 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 // no-op if defineProperty fails
             }
         }
+
+        // Debug logging - query completed
+        this.debugLog('Query completed', {
+            resultCount: instances.length,
+            hasRelations: (this.withRelations?.length ?? 0) > 0,
+            relations: this.withRelations
+        });
+
         return collection;
     }
 
@@ -1540,12 +1571,29 @@ class Eloquent {
     private static morphMap: Record<string, typeof Eloquent> = {};
     public static automaticallyEagerLoadRelationshipsEnabled: boolean = false;
 
+    // Debug logging
+    private static debugEnabled = false;
+    private static debugLogger: (message: string, data?: any) => void = (message, data) => {
+        console.log(`[Eloquent Debug] ${message}`, data || '');
+    };
+
     static automaticallyEagerLoadRelationships(): void {
         Eloquent.automaticallyEagerLoadRelationshipsEnabled = true;
     }
 
     static isAutomaticallyEagerLoadRelationshipsEnabled(): boolean {
         return Eloquent.automaticallyEagerLoadRelationshipsEnabled;
+    }
+
+    static enableDebug(logger?: (message: string, data?: any) => void): void {
+        Eloquent.debugEnabled = true;
+        if (logger) {
+            Eloquent.debugLogger = logger;
+        }
+    }
+
+    static disableDebug(): void {
+        Eloquent.debugEnabled = false;
     }
 
     static raw(value: string): string {
