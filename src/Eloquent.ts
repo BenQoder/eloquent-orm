@@ -172,6 +172,18 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         return this;
     }
 
+    tap(callback: (query: this) => void): this {
+        callback(this);
+        return this;
+    }
+
+    async each(callback: (item: any) => Promise<void> | void): Promise<void> {
+        const results = await this.get();
+        for (const item of results) {
+            await callback(item);
+        }
+    }
+
     join(table: string, first: string, operator: string, second: string): this {
         this.joins.push({ type: 'inner', table, first, operator, second });
         return this;
@@ -252,6 +264,14 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         return this.where('id', id).first();
     }
 
+    async findOrFail(id: any): Promise<WithRelations<InstanceType<M>, TWith>> {
+        const result = await this.find(id);
+        if (!result) {
+            throw new Error(`Model not found with id: ${id}`);
+        }
+        return result;
+    }
+
     // Removed write operations (insert, insertGetId, update, delete) to keep ORM read-only
 
     private async aggregate(functionName: string, column: string): Promise<any> {
@@ -259,6 +279,21 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         const table = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
         let sql = `SELECT ${functionName}(${column}) as aggregate FROM ${table}`;
         const allConditions: Condition[] = this.conditions ? JSON.parse(JSON.stringify(this.conditions)) : [];
+
+        // Apply global scopes
+        const globalScopes = (this.model as any).globalScopes;
+        if (globalScopes) {
+            for (const scope of globalScopes) {
+                if (typeof scope === 'function') {
+                    const scopeQuery = new QueryBuilder<any>(this.model);
+                    scope.call(this.model, scopeQuery);
+                    if (scopeQuery.conditions.length > 0) {
+                        allConditions.push({ operator: 'AND', group: scopeQuery.conditions });
+                    }
+                }
+            }
+        }
+
         const soft = (this.model as any).softDeletes;
         if (soft) {
             if (this.trashedMode === 'default') {
@@ -768,6 +803,42 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         return this;
     }
 
+    scope(name: string, ...args: any[]): this {
+        const model = this.model as any;
+        const scopeMethodName = `scope${name.charAt(0).toUpperCase() + name.slice(1)}`;
+        const scopeMethod = model && model[scopeMethodName];
+        if (typeof scopeMethod === 'function') {
+            return scopeMethod.call(model, this, ...args);
+        }
+        return this;
+    }
+
+    private applyCast(value: any, castType: string): any {
+        if (value === null || value === undefined) return value;
+
+        switch (castType) {
+            case 'integer':
+            case 'int':
+                return parseInt(value, 10);
+            case 'float':
+            case 'double':
+            case 'decimal':
+                return parseFloat(value);
+            case 'boolean':
+            case 'bool':
+                return Boolean(value);
+            case 'string':
+                return String(value);
+            case 'datetime':
+                return new Date(value);
+            case 'array':
+            case 'json':
+                return typeof value === 'string' ? JSON.parse(value) : value;
+            default:
+                return value;
+        }
+    }
+
     async loadRelations(instances: any[], relations: string[], model?: typeof Eloquent, prefix?: string) {
         if (!relations || relations.length === 0) return;
         const currentModel = model || this.model;
@@ -1058,18 +1129,22 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             const parentIds = instances.map(inst => inst[parentKey]).filter((id: any) => id !== null && id !== undefined);
             if (parentIds.length === 0) return;
             const cb = this.withCallbacks && this.withCallbacks[fullPath];
+
+            // Expose pivot columns if requested via child query builder
+            const columns = this.pivotConfig?.columns ? Array.from(this.pivotConfig.columns) : [];
+            const alias = this.pivotConfig?.alias || 'pivot';
+
             const rows = await this.getInBatches(parentIds, async (chunk) => {
                 const qb = RelatedModel.query()
                     .addSelect(`${relatedTable}.*`)
                     .addSelect(`${pivotTable}.${fpk} as __pivot_fk`)
                     .join(pivotTable, `${relatedTable}.${relatedKey}`, '=', `${pivotTable}.${rpk}`)
                     .whereIn(`${pivotTable}.${fpk}`, chunk);
-                // Expose pivot columns if requested via child query builder
-                const columns = this.pivotConfig?.columns ? Array.from(this.pivotConfig.columns) : [];
+
                 if (columns.length > 0) {
-                    qb.setPivotSource?.(pivotTable, this.pivotConfig?.alias || 'pivot');
+                    qb.setPivotSource?.(pivotTable, alias);
                     for (const col of columns) {
-                        qb.addSelect(`${pivotTable}.${col} AS ${(qb as any).pivotConfig.alias}__${col}`);
+                        qb.addSelect(`${pivotTable}.${col} AS ${alias}__${col}`);
                     }
                 }
                 if (cb) cb(qb);
@@ -1088,6 +1163,21 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 if (owner === null || owner === undefined) continue;
                 let arr = map.get(owner);
                 if (!arr) { arr = []; map.set(owner, arr); }
+
+                // Extract pivot data if columns were requested
+                if (columns.length > 0) {
+                    const pivotObj: any = {};
+                    for (const col of columns) {
+                        const pivotKey = `${alias}__${col}`;
+                        if (pivotKey in rel) {
+                            pivotObj[col] = (rel as any)[pivotKey];
+                        }
+                    }
+                    if (Object.keys(pivotObj).length > 0) {
+                        (rel as any)[alias] = pivotObj;
+                    }
+                }
+
                 delete (rel as any)['__pivot_fk'];
                 arr.push(rel);
             }
@@ -1180,6 +1270,14 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         return result as any ?? null;
     }
 
+    async firstOrFail(): Promise<WithRelations<InstanceType<M>, TWith>> {
+        const result = await this.first();
+        if (!result) {
+            throw new Error('No results found for query');
+        }
+        return result;
+    }
+
     async get(): Promise<Collection<WithRelations<InstanceType<M>, TWith>>> {
         if (!Eloquent.connection) throw new Error('Database connection not initialized');
         const hasUnions = this.unions.length > 0;
@@ -1224,6 +1322,17 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             // Zod validation/casting if schema provided
             const schema = (this.model as any).schema as import('zod').ZodTypeAny | undefined;
             const data = schema ? schema.parse(row) : row;
+
+            // Apply model accessors/mutators if available
+            const casts = (this.model as any).casts;
+            if (casts) {
+                for (const [key, castType] of Object.entries(casts)) {
+                    if (key in data) {
+                        data[key] = this.applyCast(data[key], castType as string);
+                    }
+                }
+            }
+
             Object.assign(instance, data);
             return this.createProxiedInstance(instance);
         });
@@ -1258,6 +1367,21 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             }
         }
         const allConditions: Condition[] = this.conditions ? JSON.parse(JSON.stringify(this.conditions)) : [];
+
+        // Apply global scopes
+        const globalScopes = (this.model as any).globalScopes;
+        if (globalScopes) {
+            for (const scope of globalScopes) {
+                if (typeof scope === 'function') {
+                    const scopeQuery = new QueryBuilder<any>(this.model);
+                    scope.call(this.model, scopeQuery);
+                    if (scopeQuery.conditions.length > 0) {
+                        allConditions.push({ operator: 'AND', group: scopeQuery.conditions });
+                    }
+                }
+            }
+        }
+
         const soft = (this.model as any).softDeletes;
         if (soft) {
             if (this.trashedMode === 'default') {
@@ -1410,7 +1534,6 @@ class ThroughBuilder {
 class Eloquent {
     [key: string]: any;
     protected static table?: string;
-    protected static fillable: string[] = [];
     protected static hidden: string[] = [];
     protected static with: string[] = [];
     static connection: any = null;
@@ -1520,11 +1643,11 @@ class Eloquent {
         return this.hasOneOfMany(related, foreignKey, column, 'min', localKey);
     }
 
-    morphOne(related: typeof Eloquent, name: string, typeColumn?: string, idColumn?: string, localKey = 'id') {
+    morphOne<T extends typeof Eloquent>(related: T, name: string, typeColumn?: string, idColumn?: string, localKey = 'id'): QueryBuilder<T, never> {
         const tCol = typeColumn || `${name}_type`;
         const iCol = idColumn || `${name}_id`;
         const morphTypes: string[] = (Eloquent as any).getPossibleMorphTypesForModel(this.constructor as typeof Eloquent);
-        return related.query().whereIn(tCol, morphTypes).where(iCol, (this as any)[localKey]);
+        return related.query().whereIn(tCol, morphTypes).where(iCol, (this as any)[localKey]) as QueryBuilder<T, never>;
     }
 
     morphOneOfMany(related: typeof Eloquent, name: string, column = 'created_at', aggregate: 'min' | 'max' = 'max', typeColumn?: string, idColumn?: string, localKey = 'id') {
@@ -1542,24 +1665,34 @@ class Eloquent {
         return this.morphOneOfMany(related, name, column, 'min', typeColumn, idColumn, localKey);
     }
 
-    morphMany(related: typeof Eloquent, name: string, typeColumn?: string, idColumn?: string, localKey = 'id') {
+    morphMany<T extends typeof Eloquent>(related: T, name: string, typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<T, never>;
+    morphMany(related: string, name: string, typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<any, never>;
+    morphMany<T extends typeof Eloquent>(related: T | string, name: string, typeColumn?: string, idColumn?: string, localKey = 'id'): QueryBuilder<T, never> | QueryBuilder<any, never> {
         const tCol = typeColumn || `${name}_type`;
         const iCol = idColumn || `${name}_id`;
         const morphTypes: string[] = (Eloquent as any).getPossibleMorphTypesForModel(this.constructor as typeof Eloquent);
-        return related.query().whereIn(tCol, morphTypes).where(iCol, (this as any)[localKey]);
+
+        if (typeof related === 'string') {
+            // If related is a table name, create a generic query
+            const tableName = related;
+            return new QueryBuilder<any, never>({} as any).table(tableName).whereIn(tCol, morphTypes).where(iCol, (this as any)[localKey]);
+        } else {
+            // Normal case with model class
+            return related.query().whereIn(tCol, morphTypes).where(iCol, (this as any)[localKey]) as QueryBuilder<T, never>;
+        }
     }
 
-    morphTo(name: string, typeColumn?: string, idColumn?: string) {
+    morphTo<T extends typeof Eloquent>(name: string, typeColumn?: string, idColumn?: string): QueryBuilder<T, never> {
         const tCol = typeColumn || `${name}_type`;
         const iCol = idColumn || `${name}_id`;
         const typeValue = (this as any)[tCol];
         const idValue = (this as any)[iCol];
         const ModelCtor = (Eloquent as any).getModelForMorphType(typeValue);
-        if (!ModelCtor) return {
-            first: async () => null,
-            get: async () => []
-        };
-        return ModelCtor.query().where('id', idValue);
+        if (!ModelCtor) {
+            // Return a query builder that will never match anything
+            return new QueryBuilder<T, never>({} as T).whereRaw('0=1');
+        }
+        return ModelCtor.query().where('id', idValue) as QueryBuilder<T, never>;
     }
 
     static registerMorphMap(map: Record<string, typeof Eloquent>) {
@@ -1602,20 +1735,20 @@ class Eloquent {
         return Array.from(set);
     }
 
-    hasOneThrough(related: typeof Eloquent, through: typeof Eloquent, firstKey?: string, secondKey?: string, localKey = 'id', secondLocalKey = 'id') {
+    hasOneThrough<T extends typeof Eloquent>(related: T, through: typeof Eloquent, firstKey?: string, secondKey?: string, localKey = 'id', secondLocalKey = 'id'): QueryBuilder<T, never> {
         const fk1 = firstKey || `${through.name.toLowerCase()}_id`;
         const fk2 = secondKey || `${related.name.toLowerCase()}_id`;
         const throughTable = (through as any).table || through.name.toLowerCase() + 's';
         const relatedTable = (related as any).table || related.name.toLowerCase() + 's';
-        return related.query().join(throughTable, `${relatedTable}.${fk2}`, '=', `${throughTable}.${secondLocalKey}`).where(`${throughTable}.${fk1}`, (this as any)[localKey]);
+        return related.query().join(throughTable, `${relatedTable}.${fk2}`, '=', `${throughTable}.${secondLocalKey}`).where(`${throughTable}.${fk1}`, (this as any)[localKey]) as QueryBuilder<T, never>;
     }
 
-    hasManyThrough(related: typeof Eloquent, through: typeof Eloquent, firstKey?: string, secondKey?: string, localKey = 'id', secondLocalKey = 'id') {
+    hasManyThrough<T extends typeof Eloquent>(related: T, through: typeof Eloquent, firstKey?: string, secondKey?: string, localKey = 'id', secondLocalKey = 'id'): QueryBuilder<T, never> {
         const fk1 = firstKey || `${through.name.toLowerCase()}_id`;
         const fk2 = secondKey || `${related.name.toLowerCase()}_id`;
         const throughTable = (through as any).table || through.name.toLowerCase() + 's';
         const relatedTable = (related as any).table || related.name.toLowerCase() + 's';
-        return related.query().join(throughTable, `${relatedTable}.${fk2}`, '=', `${throughTable}.${secondLocalKey}`).where(`${throughTable}.${fk1}`, (this as any)[localKey]);
+        return related.query().join(throughTable, `${relatedTable}.${fk2}`, '=', `${throughTable}.${secondLocalKey}`).where(`${throughTable}.${fk1}`, (this as any)[localKey]) as QueryBuilder<T, never>;
     }
 
     belongsToMany<T extends typeof Eloquent>(related: T, table?: string, foreignPivotKey?: string, relatedPivotKey?: string, parentKey = 'id', relatedKey = 'id'): QueryBuilder<T, never> {
@@ -1623,7 +1756,11 @@ class Eloquent {
         const fpk = foreignPivotKey || `${this.constructor.name.toLowerCase()}_id`;
         const rpk = relatedPivotKey || `${related.name.toLowerCase()}_id`;
         const relatedTable = (related as any).table || related.name.toLowerCase() + 's';
-        return related.query().join(pivotTable, `${relatedTable}.${relatedKey}`, '=', `${pivotTable}.${rpk}`).where(`${pivotTable}.${fpk}`, (this as any)[parentKey]);
+        const qb = related.query().join(pivotTable, `${relatedTable}.${relatedKey}`, '=', `${pivotTable}.${rpk}`).where(`${pivotTable}.${fpk}`, (this as any)[parentKey]);
+
+        // Add pivot configuration for withPivot support
+        (qb as any).pivotConfig = { table: pivotTable, alias: 'pivot', columns: new Set<string>() };
+        return qb as QueryBuilder<T, never>;
     }
 
     static getProperty(key: string) {
@@ -1665,6 +1802,11 @@ class Eloquent {
 
     async loadMissing(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<this> {
         await (this.constructor as any).loadMissing([this], relations);
+        return this;
+    }
+
+    async loadCount(relations: string | string[] | Record<string, (query: QueryBuilder) => void>): Promise<this> {
+        await (this.constructor as any).loadCount([this], relations);
         return this;
     }
 
@@ -1759,6 +1901,40 @@ class Eloquent {
         if (instancesToLoad.length === 0) return;
 
         await this.load(instancesToLoad, relations);
+    }
+
+    static async loadCount(instances: Eloquent[], relations: string | string[] | Record<string, (query: QueryBuilder) => void>): Promise<void> {
+        if (instances.length === 0) return;
+
+        const model = instances[0].constructor as typeof Eloquent;
+        const qb = model.query();
+
+        // Apply the relations to the query builder with count
+        qb.withCount(relations);
+
+        // Load the relations by calling get() on a query that matches the instances
+        const ids = instances.map(inst => (inst as any).id).filter(id => id !== null && id !== undefined);
+        if (ids.length === 0) return;
+
+        const loadedInstances = await model.query().withCount(relations).whereIn('id', ids).get();
+
+        // Create a map of loaded instances by ID
+        const loadedMap = new Map(loadedInstances.map(inst => [(inst as any).id, inst]));
+
+        // Determine relation names to copy count properties
+        const relationNames = this.parseRelationNames(relations);
+
+        // Copy count properties from loaded instances to original instances
+        for (const instance of instances) {
+            const loaded = loadedMap.get((instance as any).id);
+            if (!loaded) continue;
+            for (const name of relationNames) {
+                const countProp = `${name}_count`;
+                if ((loaded as any)[countProp] !== undefined) {
+                    (instance as any)[countProp] = (loaded as any)[countProp];
+                }
+            }
+        }
     }
 
     private static parseRelationNames(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): string[] {

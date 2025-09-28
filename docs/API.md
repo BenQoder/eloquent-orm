@@ -16,20 +16,20 @@ Complete API reference for Eloquent ORM methods and classes.
 
 ```typescript
 class Model extends Eloquent {
-    protected static table?: string;           // Table name
-    protected static fillable: string[];       // Not used (read-only ORM)
-    protected static hidden: string[];         // Hidden in JSON output
-    protected static with: string[];           // Default eager loading
-    static softDeletes?: boolean;              // Enable soft delete support
-    static morphClass?: string;                // For polymorphic relations
-    static schema?: z.ZodTypeAny;              // Zod validation schema
-    static connection: any;                    // Database connection
+	protected static table?: string; // Table name
+	protected static hidden: string[]; // Hidden in JSON output
+	protected static with: string[]; // Default eager loading
+	static softDeletes?: boolean; // Enable soft delete support
+	static morphClass?: string; // For polymorphic relations
+	static schema?: z.ZodTypeAny; // Zod validation schema
+	static connection: any; // Database connection
 }
 ```
 
 ### Static Methods
 
 #### `init(connection, morphs?)`
+
 Initialize the ORM with a database connection.
 
 ```typescript
@@ -46,6 +46,7 @@ await Eloquent.init(mysqlConnection, {
 ```
 
 #### `query()`
+
 Create a new query builder instance.
 
 ```typescript
@@ -56,6 +57,7 @@ const users = await User.query().get();
 ```
 
 #### `raw(value)`
+
 Create a raw SQL expression.
 
 ```typescript
@@ -82,6 +84,7 @@ class QueryBuilder<
 ### Query Execution
 
 #### `get()`
+
 Execute the query and return all results.
 
 ```typescript
@@ -93,6 +96,7 @@ const usersWithPosts = await User.query().with('posts').get();
 ```
 
 #### `first()`
+
 Execute the query and return the first result.
 
 ```typescript
@@ -104,6 +108,7 @@ const userWithPosts = await User.query().with('posts').first();
 ```
 
 #### `find(id)`
+
 Find a model by its primary key.
 
 ```typescript
@@ -115,6 +120,7 @@ const userWithPosts = await User.query().with('posts').find(1);
 ```
 
 #### `exists()`
+
 Check if any records exist for the query.
 
 ```typescript
@@ -127,6 +133,7 @@ const hasUsers = await User.query().where('active', true).exists();
 ### Aggregates
 
 #### `count(column?)`
+
 Get the count of records.
 
 ```typescript
@@ -138,6 +145,7 @@ const activeUserCount = await User.query().where('active', true).count();
 ```
 
 #### `sum(column)`
+
 Get the sum of a column.
 
 ```typescript
@@ -148,6 +156,7 @@ const totalPoints = await User.query().sum('points');
 ```
 
 #### `avg(column)`
+
 Get the average of a column.
 
 ```typescript
@@ -158,6 +167,7 @@ const averageAge = await User.query().avg('age');
 ```
 
 #### `min(column)`
+
 Get the minimum value of a column.
 
 ```typescript
@@ -168,6 +178,7 @@ const youngestAge = await User.query().min('age');
 ```
 
 #### `max(column)`
+
 Get the maximum value of a column.
 
 ```typescript
@@ -180,6 +191,7 @@ const oldestAge = await User.query().max('age');
 ### Where Clauses
 
 #### `where(column, operator?, value?)`
+
 Add a basic where clause.
 
 ```typescript
@@ -193,6 +205,7 @@ User.query().where('status', 'in', ['active', 'pending'])
 ```
 
 #### `orWhere(column, operator?, value?)`
+
 Add an OR where clause.
 
 ```typescript
@@ -206,6 +219,7 @@ User.query()
 ```
 
 #### `whereIn(column, values)`
+
 Add a where in clause.
 
 ```typescript
@@ -216,6 +230,7 @@ User.query().whereIn('status', ['active', 'pending'])
 ```
 
 #### `whereNotIn(column, values)`
+
 Add a where not in clause.
 
 ```typescript
@@ -226,6 +241,7 @@ User.query().whereNotIn('role', ['banned', 'suspended'])
 ```
 
 #### `whereBetween(column, values)`
+
 Add a where between clause.
 
 ```typescript
@@ -236,6 +252,7 @@ User.query().whereBetween('age', [18, 65])
 ```
 
 #### `whereNotBetween(column, values)`
+
 Add a where not between clause.
 
 ```typescript
@@ -246,6 +263,7 @@ User.query().whereNotBetween('score', [0, 50])
 ```
 
 #### `whereNull(column)`
+
 Add a where null clause.
 
 ```typescript
@@ -256,6 +274,7 @@ User.query().whereNull('deleted_at')
 ```
 
 #### `whereNotNull(column)`
+
 Add a where not null clause.
 
 ```typescript
@@ -266,6 +285,7 @@ User.query().whereNotNull('email_verified_at')
 ```
 
 #### `whereRaw(sql, bindings?)`
+
 Add a raw where clause.
 
 ```typescript
@@ -278,6 +298,7 @@ User.query().whereRaw('YEAR(created_at) = ?', [2023])
 ### Ordering & Limiting
 
 #### `orderBy(column, direction?)`
+
 Add an order by clause.
 
 ```typescript
@@ -289,6 +310,7 @@ User.query().orderBy('name') // defaults to 'asc'
 ```
 
 #### `inRandomOrder()`
+
 Order results randomly.
 
 ```typescript
@@ -299,6 +321,7 @@ User.query().inRandomOrder().limit(5).get()
 ```
 
 #### `limit(count)`
+
 Limit the number of results.
 
 ```typescript
@@ -309,6 +332,7 @@ User.query().limit(10)
 ```
 
 #### `offset(count)`
+
 Offset the results.
 
 ```typescript
@@ -321,6 +345,7 @@ User.query().offset(20).limit(10) // pagination
 ### Grouping
 
 #### `groupBy(...columns)`
+
 Add group by clauses.
 
 ```typescript
@@ -332,6 +357,7 @@ User.query().groupBy('status', 'role')
 ```
 
 #### `having(column, operator?, value?)`
+
 Add a having clause.
 
 ```typescript
@@ -347,6 +373,7 @@ User.query()
 ### Joins
 
 #### `join(table, first, operator?, second?)`
+
 Add an inner join.
 
 ```typescript
@@ -357,6 +384,7 @@ User.query().join('profiles', 'users.id', '=', 'profiles.user_id')
 ```
 
 #### `leftJoin(table, first, operator?, second?)`
+
 Add a left join.
 
 ```typescript
@@ -367,6 +395,7 @@ User.query().leftJoin('profiles', 'users.id', '=', 'profiles.user_id')
 ```
 
 #### `rightJoin(table, first, operator?, second?)`
+
 Add a right join.
 
 ```typescript
@@ -377,6 +406,7 @@ User.query().rightJoin('profiles', 'users.id', '=', 'profiles.user_id')
 ```
 
 #### `crossJoin(table)`
+
 Add a cross join.
 
 ```typescript
@@ -389,6 +419,7 @@ User.query().crossJoin('settings')
 ### Selection
 
 #### `select(...columns)`
+
 Set the columns to select.
 
 ```typescript
@@ -400,6 +431,7 @@ User.query().select('users.*', 'profiles.bio')
 ```
 
 #### `addSelect(...columns)`
+
 Add columns to the existing selection.
 
 ```typescript
@@ -412,6 +444,7 @@ User.query()
 ```
 
 #### `distinct()`
+
 Add a distinct clause.
 
 ```typescript
@@ -424,6 +457,7 @@ User.query().distinct().select('status')
 ### Eager Loading
 
 #### `with(relations, callback?)`
+
 Eager load relations.
 
 ```typescript
@@ -442,6 +476,7 @@ User.query().with({
 ```
 
 #### `withWhereHas(relation, callback?)`
+
 Eager load and constrain the main query.
 
 ```typescript
@@ -454,6 +489,7 @@ User.query().withWhereHas('posts', query => {
 ```
 
 #### `without(relations)`
+
 Remove relations from eager loading.
 
 ```typescript
@@ -464,6 +500,7 @@ User.query().with(['posts', 'profile']).without('profile')
 ```
 
 #### `withOnly(relations)`
+
 Set specific relations for eager loading (clears existing).
 
 ```typescript
@@ -476,6 +513,7 @@ User.query().with(['posts', 'profile']).withOnly('posts')
 ### Relationship Queries
 
 #### `has(relation, operator?, count?)`
+
 Query based on relationship existence.
 
 ```typescript
@@ -487,6 +525,7 @@ User.query().has('posts', '>', 5)
 ```
 
 #### `doesntHave(relation)`
+
 Query based on relationship non-existence.
 
 ```typescript
@@ -497,6 +536,7 @@ User.query().doesntHave('posts')
 ```
 
 #### `whereHas(relation, callback?)`
+
 Query with relationship constraints.
 
 ```typescript
@@ -509,6 +549,7 @@ User.query().whereHas('posts', query => {
 ```
 
 #### `whereDoesntHave(relation, callback?)`
+
 Query with inverse relationship constraints.
 
 ```typescript
@@ -523,6 +564,7 @@ User.query().whereDoesntHave('posts', query => {
 ### Relationship Aggregates
 
 #### `withCount(relations)`
+
 Add relationship counts.
 
 ```typescript
@@ -537,6 +579,7 @@ User.query().withCount({
 ```
 
 #### `withSum(relation, column)`
+
 Add relationship sum.
 
 ```typescript
@@ -547,6 +590,7 @@ User.query().withSum('posts', 'views')
 ```
 
 #### `withAvg(relation, column)`
+
 Add relationship average.
 
 ```typescript
@@ -557,6 +601,7 @@ User.query().withAvg('posts', 'rating')
 ```
 
 #### `withMin(relation, column)`
+
 Add relationship minimum.
 
 ```typescript
@@ -567,6 +612,7 @@ User.query().withMin('posts', 'created_at')
 ```
 
 #### `withMax(relation, column)`
+
 Add relationship maximum.
 
 ```typescript
@@ -579,6 +625,7 @@ User.query().withMax('posts', 'updated_at')
 ### Soft Deletes
 
 #### `withTrashed()`
+
 Include soft deleted records.
 
 ```typescript
@@ -589,6 +636,7 @@ User.query().withTrashed().get()
 ```
 
 #### `onlyTrashed()`
+
 Only get soft deleted records.
 
 ```typescript
@@ -599,6 +647,7 @@ User.query().onlyTrashed().get()
 ```
 
 #### `withoutTrashed()`
+
 Exclude soft deleted records (default).
 
 ```typescript
@@ -611,6 +660,7 @@ User.query().withoutTrashed().get()
 ### One of Many
 
 #### `latestOfMany(column?)`
+
 Get the latest record based on a column.
 
 ```typescript
@@ -622,6 +672,7 @@ User.query().latestOfMany('updated_at')
 ```
 
 #### `oldestOfMany(column?)`
+
 Get the oldest record based on a column.
 
 ```typescript
@@ -633,6 +684,7 @@ User.query().oldestOfMany('created_at')
 ```
 
 #### `ofMany(column, aggregate)`
+
 Get one record based on min/max aggregate.
 
 ```typescript
@@ -646,6 +698,7 @@ User.query().ofMany('price', 'min')  // Cheapest
 ### Conditional Queries
 
 #### `when(condition, callback, defaultCallback?)`
+
 Conditionally apply query constraints.
 
 ```typescript
@@ -669,6 +722,7 @@ User.query().when(includeInactive,
 ### Unions
 
 #### `union(query, all?)`
+
 Add a union clause.
 
 ```typescript
@@ -683,6 +737,7 @@ const combined = activeUsers.union(premiumUsers).get();
 ### Chunking
 
 #### `chunk(size, callback)`
+
 Process results in chunks.
 
 ```typescript
@@ -697,6 +752,7 @@ await User.query().chunk(1000, users => {
 ```
 
 #### `chunkAsync(size, callback)`
+
 Process results in chunks asynchronously.
 
 ```typescript
@@ -711,6 +767,7 @@ await User.query().chunkAsync(1000, async users => {
 ### Utility Methods
 
 #### `clone()`
+
 Clone the query builder.
 
 ```typescript
@@ -723,6 +780,7 @@ const userQuery = baseQuery.clone().where('role', 'user');
 ```
 
 #### `toSql()`
+
 Get the SQL representation of the query.
 
 ```typescript
@@ -739,6 +797,7 @@ console.log(params); // [true]
 ### Relationships
 
 #### `belongsTo<T>(related, foreignKey, ownerKey?)`
+
 Define a belongs to relationship.
 
 ```typescript
@@ -757,6 +816,7 @@ class Post extends Eloquent {
 ```
 
 #### `hasOne<T>(related, foreignKey, localKey?)`
+
 Define a has one relationship.
 
 ```typescript
@@ -775,6 +835,7 @@ class User extends Eloquent {
 ```
 
 #### `hasMany<T>(related, foreignKey, localKey?)`
+
 Define a has many relationship.
 
 ```typescript
@@ -793,6 +854,7 @@ class User extends Eloquent {
 ```
 
 #### `belongsToMany<T>(related, table?, foreignPivotKey?, relatedPivotKey?, parentKey?, relatedKey?)`
+
 Define a belongs to many relationship.
 
 ```typescript
@@ -816,6 +878,7 @@ class User extends Eloquent {
 ### Lazy Loading
 
 #### `load(relations)`
+
 Lazy load relations on the instance.
 
 ```typescript
@@ -831,6 +894,7 @@ await user.load({
 ```
 
 #### `loadMissing(relations)`
+
 Load relations that haven't been loaded yet.
 
 ```typescript
@@ -844,6 +908,7 @@ await user.loadMissing('profile'); // Only loads profile, posts already loaded
 ### JSON Serialization
 
 #### `toJSON()`
+
 Convert the model to JSON, respecting hidden fields.
 
 ```typescript
@@ -858,6 +923,7 @@ console.log(json); // Hidden fields are excluded
 ## Static Utility Methods
 
 #### `load(instances, relations)`
+
 Load relations on multiple instances.
 
 ```typescript
@@ -872,6 +938,7 @@ await User.load(users, 'posts');
 ```
 
 #### `loadMissing(instances, relations)`
+
 Load missing relations on multiple instances.
 
 ```typescript

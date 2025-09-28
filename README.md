@@ -593,16 +593,83 @@ const user = await User.query().with('posts').first();
 
 ### Model Configuration
 
+Models support various configuration options to customize their behavior:
+
 ```typescript
 class User extends Eloquent {
+	// Database Configuration
 	protected static table = 'users'; // Table name
-	protected static fillable = ['name', 'email']; // Not used (read-only)
-	protected static hidden = ['password']; // Hidden in JSON output
-	protected static with = ['profile']; // Default eager loading
-	static softDeletes = true; // Enable soft deletes
+	protected static hidden: string[] = ['password']; // Hidden in JSON output
+	protected static with: string[] = ['profile']; // Default eager loading
+	static softDeletes = true; // Enable soft delete support
 	static morphClass = 'App\\Models\\User'; // For polymorphic relations
+
+	// Schema & Validation
+	static schema?: z.ZodTypeAny; // Zod validation schema
+
+	// Type Casting
+	protected static casts: Record<string, string> = {
+		created_at: 'datetime',
+		updated_at: 'datetime',
+		amount: 'integer',
+		price: 'string', // Stored as string in DB
+		is_active: 'boolean',
+	};
+
+	// Relationship Type Definitions (for TypeScript)
+	relationsTypes!: {
+		posts: Post[];
+		profile: Profile;
+		roles: Role[];
+	};
 }
 ```
+
+#### Available Configuration Options
+
+| Property         | Type                     | Description                     | Example                      |
+| ---------------- | ------------------------ | ------------------------------- | ---------------------------- |
+| `table`          | `string`                 | Database table name             | `'users'`                    |
+| `hidden`         | `string[]`               | Fields to hide in JSON output   | `['password', 'token']`      |
+| `with`           | `string[]`               | Default eager loading           | `['profile', 'posts']`       |
+| `softDeletes`    | `boolean`                | Enable soft delete support      | `true`                       |
+| `morphClass`     | `string`                 | Polymorphic type identifier     | `'App\\Models\\User'`        |
+| `schema`         | `z.ZodTypeAny`           | Zod validation schema           | `z.object({...})`            |
+| `casts`          | `Record<string, string>` | Type casting rules              | `{'created_at': 'datetime'}` |
+| `relationsTypes` | `object`                 | TypeScript relation definitions | `{posts: Post[]}`            |
+
+#### Schema Definition Guidelines
+
+```typescript
+// ✅ Good - Complete schema with proper types
+static schema = z.object({
+	id: z.number().int().optional(),
+	name: z.string().min(1).max(255),
+	email: z.string().email(),
+	age: z.number().int().min(0).max(150).nullable().optional(),
+	created_at: z.union([z.string(), z.date()]).nullable().optional(),
+	updated_at: z.union([z.string(), z.date()]).nullable().optional(),
+});
+
+// ❌ Bad - Incomplete or incorrect schema
+static schema = z.object({
+	id: z.any(),  // Too loose
+	name: z.string(),  // No validation
+	age: z.number(),  // Doesn't handle null/undefined
+});
+```
+
+#### Cast Types Available
+
+| Cast         | Database Type        | TypeScript Type | Example          |
+| ------------ | -------------------- | --------------- | ---------------- |
+| `'integer'`  | `INT`                | `number`        | `123`            |
+| `'float'`    | `FLOAT/DECIMAL`      | `number`        | `123.45`         |
+| `'string'`   | `VARCHAR/TEXT`       | `string`        | `"Hello"`        |
+| `'boolean'`  | `TINYINT(1)`         | `boolean`       | `true`           |
+| `'datetime'` | `DATETIME/TIMESTAMP` | `Date`          | `new Date()`     |
+| `'array'`    | `JSON`               | `any[]`         | `[1, 2, 3]`      |
+| `'json'`     | `JSON`               | `object`        | `{key: 'value'}` |
 
 ### Connection Management
 
