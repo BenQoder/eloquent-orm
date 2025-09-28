@@ -181,6 +181,12 @@ declare class Eloquent {
     static enableDebug(logger?: (message: string, data?: any) => void): void;
     static disableDebug(): void;
     static raw(value: string): string;
+    private static getLoadBatch;
+    private static addToLoadBatch;
+    private static scheduleBatchFlush;
+    private static flushLoadBatch;
+    static flushLoadForAllBatch(): Promise<void>;
+    static clearLoadForAllBatch(): void;
     static init(connection: any, morphs?: Record<string, typeof Eloquent>): Promise<void>;
     static useConnection(connection: any, morphs?: Record<string, typeof Eloquent>): void;
     static getRelationConfig(model: typeof Eloquent, relationName: string): any | null;

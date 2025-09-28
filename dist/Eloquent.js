@@ -1470,6 +1470,9 @@ class Collection extends Array {
         return this.relationshipAutoloadingEnabled || Eloquent.automaticallyEagerLoadRelationshipsEnabled;
     }
 }
+// Static properties for batching
+const LOAD_BATCH_KEY = Symbol('loadBatch');
+const BATCH_TIMER_KEY = Symbol('batchTimer');
 class ThroughBuilder {
     constructor(instance, throughRelation) {
         this.instance = instance;
@@ -1516,6 +1519,126 @@ class Eloquent {
     }
     static raw(value) {
         return value;
+    }
+    // Batching system for loadForAll
+    static getLoadBatch() {
+        // Use globalThis if available, otherwise use a module-level variable
+        if (typeof globalThis !== 'undefined') {
+            if (!globalThis[LOAD_BATCH_KEY]) {
+                globalThis[LOAD_BATCH_KEY] = [];
+            }
+            return globalThis[LOAD_BATCH_KEY];
+        }
+        // Fallback: use a static property on the Eloquent class
+        if (!Eloquent[LOAD_BATCH_KEY]) {
+            Eloquent[LOAD_BATCH_KEY] = [];
+        }
+        return Eloquent[LOAD_BATCH_KEY];
+    }
+    static addToLoadBatch(instances, relations) {
+        const batch = this.getLoadBatch();
+        // Check if we already have a batch item for these instances and relations
+        const existingItem = batch.find(item => {
+            // Check if instances are the same (same length and all instances match)
+            if (item.instances.length !== instances.length)
+                return false;
+            const itemIds = item.instances.map(inst => inst.id || inst).sort();
+            const instancesIds = instances.map(inst => inst.id || inst).sort();
+            if (itemIds.join(',') !== instancesIds.join(','))
+                return false;
+            // Check if relations are the same
+            return JSON.stringify(item.relations) === JSON.stringify(relations);
+        });
+        if (!existingItem) {
+            batch.push({ instances, relations });
+        }
+        // Schedule flush if not already scheduled
+        this.scheduleBatchFlush();
+    }
+    static scheduleBatchFlush() {
+        // Check if already scheduled
+        const isScheduled = typeof globalThis !== 'undefined' ?
+            globalThis[BATCH_TIMER_KEY] :
+            Eloquent[BATCH_TIMER_KEY];
+        if (isScheduled) {
+            return; // Already scheduled
+        }
+        const flushBatch = () => {
+            const batch = this.getLoadBatch();
+            if (batch.length > 0) {
+                this.flushLoadBatch();
+            }
+            // Clear the timer flag
+            if (typeof globalThis !== 'undefined') {
+                globalThis[BATCH_TIMER_KEY] = false;
+            }
+            else {
+                Eloquent[BATCH_TIMER_KEY] = false;
+            }
+        };
+        // Set the timer flag
+        if (typeof globalThis !== 'undefined') {
+            globalThis[BATCH_TIMER_KEY] = true;
+        }
+        else {
+            Eloquent[BATCH_TIMER_KEY] = true;
+        }
+        // Use the most appropriate async scheduling mechanism
+        if (typeof process !== 'undefined' && process.nextTick) {
+            process.nextTick(flushBatch);
+        }
+        else if (typeof globalThis !== 'undefined' && typeof globalThis.setImmediate !== 'undefined') {
+            globalThis.setImmediate(flushBatch);
+        }
+        else {
+            setTimeout(flushBatch, 0);
+        }
+    }
+    static async flushLoadBatch() {
+        const batch = this.getLoadBatch();
+        if (batch.length === 0)
+            return;
+        // Clear the batch first to prevent recursion
+        this.getLoadBatch().length = 0;
+        // Group by instances to avoid loading the same instances multiple times
+        const instanceGroups = new Map();
+        for (const item of batch) {
+            const key = item.instances.map(inst => inst.id || inst).sort().join(',');
+            if (!instanceGroups.has(key)) {
+                instanceGroups.set(key, { instances: item.instances, relations: new Set() });
+            }
+            const group = instanceGroups.get(key);
+            if (typeof item.relations === 'string') {
+                group.relations.add(item.relations);
+            }
+            else if (Array.isArray(item.relations)) {
+                item.relations.forEach(rel => group.relations.add(rel));
+            }
+            else {
+                // Handle object form
+                Object.keys(item.relations).forEach(rel => group.relations.add(rel));
+            }
+        }
+        // Execute each group
+        for (const [key, group] of instanceGroups) {
+            const relationsArray = Array.from(group.relations);
+            await this.loadMissing(group.instances, relationsArray);
+        }
+    }
+    // Public method to manually flush the load batch (useful for testing)
+    static async flushLoadForAllBatch() {
+        await this.flushLoadBatch();
+    }
+    // Public method to clear the load batch without executing (useful for cleanup)
+    static clearLoadForAllBatch() {
+        this.getLoadBatch().length = 0;
+        // Clear the timer flag as well
+        if (typeof globalThis !== 'undefined') {
+            globalThis[BATCH_TIMER_KEY] = false;
+        }
+        else {
+            Eloquent[BATCH_TIMER_KEY] = false;
+        }
     }
     static async init(connection, morphs) {
         // Require an already-created connection
@@ -1863,9 +1986,8 @@ class Eloquent {
         const relations = args.length > 1 ? args : args[0];
         const collection = this.__collection;
         const targets = Array.isArray(collection) && collection.length ? collection : [this];
-        const model = this.constructor;
-        // Load only missing relations for the entire set
-        await model.loadMissing(targets, relations);
+        // Add to batch instead of loading immediately
+        Eloquent.addToLoadBatch(targets, relations);
         // Return the loaded relation value(s) for this instance for convenience
         // Return the instance with loaded relations available
         return this;
