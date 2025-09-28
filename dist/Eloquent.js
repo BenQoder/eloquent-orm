@@ -428,7 +428,7 @@ class QueryBuilder {
     buildHasSubquery(relationName, callback, isCount = false) {
         const cfg = Eloquent.getRelationConfig(this.model, relationName);
         if (!cfg) {
-            return { sql: 'SELECT 1 WHERE 0=1', params: [] };
+            throw new Error(`Relationship '${relationName}' does not exist on model ${this.model.name}`);
         }
         const parentTable = this.tableName || this.model.table || this.model.name.toLowerCase() + 's';
         const RelatedModel = typeof cfg.model === 'string' ? Eloquent.getModelForMorphType(cfg.model) : cfg.model;
@@ -767,8 +767,9 @@ class QueryBuilder {
     }
     async loadSingleRelation(instances, relationName, model, fullPath) {
         const config = Eloquent.getRelationConfig(model, relationName);
-        if (!config)
-            return;
+        if (!config) {
+            throw new Error(`Relationship '${relationName}' does not exist on model ${model.name}`);
+        }
         const type = config.type;
         if (type === 'belongsTo') {
             const RelatedModel = typeof config.model === 'string'

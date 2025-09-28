@@ -585,7 +585,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
     private buildHasSubquery(relationName: string, callback?: (query: QueryBuilder) => void, isCount = false): { sql: string, params: any[] } {
         const cfg = (Eloquent as any).getRelationConfig(this.model, relationName);
         if (!cfg) {
-            return { sql: 'SELECT 1 WHERE 0=1', params: [] };
+            throw new Error(`Relationship '${relationName}' does not exist on model ${this.model.name}`);
         }
         const parentTable = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
         const RelatedModel = typeof cfg.model === 'string' ? (Eloquent as any).getModelForMorphType(cfg.model) : cfg.model;
@@ -917,7 +917,9 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
 
     private async loadSingleRelation(instances: any[], relationName: string, model: typeof Eloquent, fullPath: string) {
         const config = (Eloquent as any).getRelationConfig(model, relationName);
-        if (!config) return;
+        if (!config) {
+            throw new Error(`Relationship '${relationName}' does not exist on model ${model.name}`);
+        }
         const type = config.type;
         if (type === 'belongsTo') {
             const RelatedModel = typeof config.model === 'string'
