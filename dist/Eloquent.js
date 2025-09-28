@@ -1,4 +1,9 @@
 class QueryBuilder {
+    debugLog(message, data) {
+        if (Eloquent.debugEnabled) {
+            Eloquent.debugLogger(message, data);
+        }
+    }
     constructor(model) {
         this.conditions = [];
         this.selectColumns = ['*'];
@@ -73,6 +78,16 @@ class QueryBuilder {
         this.offsetValue = value;
         return this;
     }
+    tap(callback) {
+        callback(this);
+        return this;
+    }
+    async each(callback) {
+        const results = await this.get();
+        for (const item of results) {
+            await callback(item);
+        }
+    }
     join(table, first, operator, second) {
         this.joins.push({ type: 'inner', table, first, operator, second });
         return this;
@@ -138,6 +153,13 @@ class QueryBuilder {
     async find(id) {
         return this.where('id', id).first();
     }
+    async findOrFail(id) {
+        const result = await this.find(id);
+        if (!result) {
+            throw new Error(`Model not found with id: ${id}`);
+        }
+        return result;
+    }
     // Removed write operations (insert, insertGetId, update, delete) to keep ORM read-only
     async aggregate(functionName, column) {
         if (!Eloquent.connection)
@@ -145,6 +167,19 @@ class QueryBuilder {
         const table = this.tableName || this.model.table || this.model.name.toLowerCase() + 's';
         let sql = `SELECT ${functionName}(${column}) as aggregate FROM ${table}`;
         const allConditions = this.conditions ? JSON.parse(JSON.stringify(this.conditions)) : [];
+        // Apply global scopes
+        const globalScopes = this.model.globalScopes;
+        if (globalScopes) {
+            for (const scope of globalScopes) {
+                if (typeof scope === 'function') {
+                    const scopeQuery = new QueryBuilder(this.model);
+                    scope.call(this.model, scopeQuery);
+                    if (scopeQuery.conditions.length > 0) {
+                        allConditions.push({ operator: 'AND', group: scopeQuery.conditions });
+                    }
+                }
+            }
+        }
         const soft = this.model.softDeletes;
         if (soft) {
             if (this.trashedMode === 'default') {
@@ -157,9 +192,14 @@ class QueryBuilder {
         const whereClause = allConditions.length > 0 ? this.buildWhereClause(allConditions) : { sql: '', params: [] };
         if (whereClause.sql)
             sql += ` WHERE ${whereClause.sql}`;
+        // Debug logging
+        this.debugLog('Executing aggregate query', { sql, params: whereClause.params, function: functionName, column });
         this.ensureReadOnlySql(sql, 'aggregate');
         const [rows] = await Eloquent.connection.query(sql, whereClause.params);
-        return rows[0].aggregate;
+        const result = rows[0].aggregate;
+        // Debug logging - aggregate completed
+        this.debugLog('Aggregate query completed', { function: functionName, column, result });
+        return result;
     }
     where(columnOrCallback, operatorOrValue, value) {
         if (typeof columnOrCallback === 'function') {
@@ -391,7 +431,7 @@ class QueryBuilder {
             return { sql: 'SELECT 1 WHERE 0=1', params: [] };
         }
         const parentTable = this.tableName || this.model.table || this.model.name.toLowerCase() + 's';
-        const RelatedModel = cfg.model;
+        const RelatedModel = typeof cfg.model === 'string' ? Eloquent.getModelForMorphType(cfg.model) : cfg.model;
         const relatedTable = RelatedModel.table || RelatedModel.name.toLowerCase() + 's';
         const relQB = RelatedModel.query();
         if (callback)
@@ -623,10 +663,46 @@ class QueryBuilder {
         }
         return this;
     }
+    scope(name, ...args) {
+        const model = this.model;
+        const scopeMethodName = `scope${name.charAt(0).toUpperCase() + name.slice(1)}`;
+        const scopeMethod = model && model[scopeMethodName];
+        if (typeof scopeMethod === 'function') {
+            return scopeMethod.call(model, this, ...args);
+        }
+        return this;
+    }
+    applyCast(value, castType) {
+        if (value === null || value === undefined)
+            return value;
+        switch (castType) {
+            case 'integer':
+            case 'int':
+                return parseInt(value, 10);
+            case 'float':
+            case 'double':
+            case 'decimal':
+                return parseFloat(value);
+            case 'boolean':
+            case 'bool':
+                return Boolean(value);
+            case 'string':
+                return String(value);
+            case 'datetime':
+                return new Date(value);
+            case 'array':
+            case 'json':
+                return typeof value === 'string' ? JSON.parse(value) : value;
+            default:
+                return value;
+        }
+    }
     async loadRelations(instances, relations, model, prefix) {
         if (!relations || relations.length === 0)
             return;
         const currentModel = model || this.model;
+        // Debug logging
+        this.debugLog('Loading relations', { instanceCount: instances.length, relations, model: currentModel.name });
         for (const relation of relations) {
             const parts = relation.split('.');
             const relationKey = parts[0];
@@ -695,7 +771,12 @@ class QueryBuilder {
             return;
         const type = config.type;
         if (type === 'belongsTo') {
-            const RelatedModel = config.model;
+            const RelatedModel = typeof config.model === 'string'
+                ? Eloquent.getModelForMorphType(config.model)
+                : config.model;
+            if (!RelatedModel) {
+                throw new Error(`Model '${config.model}' not found in morph map`);
+            }
             const foreignKey = config.foreignKey;
             const ownerKey = config.ownerKey || 'id';
             const foreignKeys = instances.map(inst => inst[foreignKey]).filter(id => id !== null && id !== undefined);
@@ -708,6 +789,16 @@ class QueryBuilder {
                     cb(qb);
                 return qb.get();
             });
+            // Share a collection among related instances for nested propagation
+            const relatedCollection = new Collection();
+            for (const rel of relatedInstances)
+                relatedCollection.push(rel);
+            for (const rel of relatedInstances) {
+                try {
+                    Object.defineProperty(rel, '__collection', { value: relatedCollection, enumerable: false, configurable: true, writable: true });
+                }
+                catch { }
+            }
             const map = new Map(relatedInstances.map((rel) => [rel[ownerKey], rel]));
             for (const inst of instances) {
                 const target = map.get(inst[foreignKey]) || null;
@@ -723,7 +814,12 @@ class QueryBuilder {
             }
         }
         else if (type === 'hasMany') {
-            const RelatedModel = config.model;
+            const RelatedModel = typeof config.model === 'string'
+                ? Eloquent.getModelForMorphType(config.model)
+                : config.model;
+            if (!RelatedModel) {
+                throw new Error(`Model '${config.model}' not found in morph map`);
+            }
             const foreignKey = config.foreignKey;
             const localKey = config.localKey || 'id';
             const localKeys = instances.map(inst => inst[localKey]).filter(id => id !== null && id !== undefined);
@@ -736,6 +832,15 @@ class QueryBuilder {
                     cb(qb);
                 return qb.get();
             });
+            const relatedCollection = new Collection();
+            for (const rel of relatedInstances)
+                relatedCollection.push(rel);
+            for (const rel of relatedInstances) {
+                try {
+                    Object.defineProperty(rel, '__collection', { value: relatedCollection, enumerable: false, configurable: true, writable: true });
+                }
+                catch { }
+            }
             const map = new Map();
             for (const rel of relatedInstances) {
                 const key = rel[foreignKey];
@@ -756,7 +861,12 @@ class QueryBuilder {
             }
         }
         else if (type === 'hasOne') {
-            const RelatedModel = config.model;
+            const RelatedModel = typeof config.model === 'string'
+                ? Eloquent.getModelForMorphType(config.model)
+                : config.model;
+            if (!RelatedModel) {
+                throw new Error(`Model '${config.model}' not found in morph map`);
+            }
             const foreignKey = config.foreignKey;
             const localKey = config.localKey || 'id';
             const localKeys = instances.map(inst => inst[localKey]).filter(id => id !== null && id !== undefined);
@@ -769,6 +879,15 @@ class QueryBuilder {
                     cb(qb);
                 return qb.get();
             });
+            const relatedCollection = new Collection();
+            for (const rel of relatedInstances)
+                relatedCollection.push(rel);
+            for (const rel of relatedInstances) {
+                try {
+                    Object.defineProperty(rel, '__collection', { value: relatedCollection, enumerable: false, configurable: true, writable: true });
+                }
+                catch { }
+            }
             const map = new Map();
             for (const rel of relatedInstances) {
                 const key = rel[foreignKey];
@@ -787,7 +906,7 @@ class QueryBuilder {
             }
         }
         else if (type === 'morphOne') {
-            const RelatedModel = config.model;
+            const RelatedModel = typeof config.model === 'string' ? Eloquent.getModelForMorphType(config.model) : config.model;
             const name = config.morphName;
             const typeColumn = config.typeColumn || `${name}_type`;
             const idColumn = config.idColumn || `${name}_id`;
@@ -803,6 +922,15 @@ class QueryBuilder {
                     cb(qb);
                 return qb.get();
             });
+            const relatedCollection = new Collection();
+            for (const rel of relatedInstances)
+                relatedCollection.push(rel);
+            for (const rel of relatedInstances) {
+                try {
+                    Object.defineProperty(rel, '__collection', { value: relatedCollection, enumerable: false, configurable: true, writable: true });
+                }
+                catch { }
+            }
             const map = new Map();
             for (const rel of relatedInstances) {
                 const key = rel[idColumn];
@@ -821,7 +949,7 @@ class QueryBuilder {
             }
         }
         else if (type === 'morphMany') {
-            const RelatedModel = config.model;
+            const RelatedModel = typeof config.model === 'string' ? Eloquent.getModelForMorphType(config.model) : config.model;
             const name = config.morphName;
             const typeColumn = config.typeColumn || `${name}_type`;
             const idColumn = config.idColumn || `${name}_id`;
@@ -837,6 +965,15 @@ class QueryBuilder {
                     cb(qb);
                 return qb.get();
             });
+            const relatedCollection = new Collection();
+            for (const rel of relatedInstances)
+                relatedCollection.push(rel);
+            for (const rel of relatedInstances) {
+                try {
+                    Object.defineProperty(rel, '__collection', { value: relatedCollection, enumerable: false, configurable: true, writable: true });
+                }
+                catch { }
+            }
             const map = new Map();
             for (const rel of relatedInstances) {
                 const key = rel[idColumn];
@@ -889,6 +1026,15 @@ class QueryBuilder {
                         cb(qb);
                     return qb.get();
                 });
+                const relatedCollection = new Collection();
+                for (const rel of relatedInstances)
+                    relatedCollection.push(rel);
+                for (const rel of relatedInstances) {
+                    try {
+                        Object.defineProperty(rel, '__collection', { value: relatedCollection, enumerable: false, configurable: true, writable: true });
+                    }
+                    catch { }
+                }
                 const map = new Map(relatedInstances.map((rel) => [rel.id, rel]));
                 for (const inst of list) {
                     inst[relationName] = map.get(inst[idColumn]) || null;
@@ -904,7 +1050,12 @@ class QueryBuilder {
             }
         }
         else if (type === 'belongsToMany') {
-            const RelatedModel = config.model;
+            const RelatedModel = typeof config.model === 'string'
+                ? Eloquent.getModelForMorphType(config.model)
+                : config.model;
+            if (!RelatedModel) {
+                throw new Error(`Model '${config.model}' not found in morph map`);
+            }
             const relatedTable = RelatedModel.table || RelatedModel.name.toLowerCase() + 's';
             const pivotTable = config.table || [model.name.toLowerCase(), RelatedModel.name.toLowerCase()].sort().join('_');
             const fpk = config.foreignPivotKey || `${model.name.toLowerCase()}_id`;
@@ -915,24 +1066,34 @@ class QueryBuilder {
             if (parentIds.length === 0)
                 return;
             const cb = this.withCallbacks && this.withCallbacks[fullPath];
+            // Expose pivot columns if requested via child query builder
+            const columns = this.pivotConfig?.columns ? Array.from(this.pivotConfig.columns) : [];
+            const alias = this.pivotConfig?.alias || 'pivot';
             const rows = await this.getInBatches(parentIds, async (chunk) => {
                 const qb = RelatedModel.query()
                     .addSelect(`${relatedTable}.*`)
                     .addSelect(`${pivotTable}.${fpk} as __pivot_fk`)
                     .join(pivotTable, `${relatedTable}.${relatedKey}`, '=', `${pivotTable}.${rpk}`)
                     .whereIn(`${pivotTable}.${fpk}`, chunk);
-                // Expose pivot columns if requested via child query builder
-                const columns = this.pivotConfig?.columns ? Array.from(this.pivotConfig.columns) : [];
                 if (columns.length > 0) {
-                    qb.setPivotSource?.(pivotTable, this.pivotConfig?.alias || 'pivot');
+                    qb.setPivotSource?.(pivotTable, alias);
                     for (const col of columns) {
-                        qb.addSelect(`${pivotTable}.${col} AS ${qb.pivotConfig.alias}__${col}`);
+                        qb.addSelect(`${pivotTable}.${col} AS ${alias}__${col}`);
                     }
                 }
                 if (cb)
                     cb(qb);
                 return qb.get();
             });
+            const relatedCollection = new Collection();
+            for (const rel of rows)
+                relatedCollection.push(rel);
+            for (const rel of rows) {
+                try {
+                    Object.defineProperty(rel, '__collection', { value: relatedCollection, enumerable: false, configurable: true, writable: true });
+                }
+                catch { }
+            }
             const map = new Map();
             for (const rel of rows) {
                 const owner = rel['__pivot_fk'];
@@ -942,6 +1103,19 @@ class QueryBuilder {
                 if (!arr) {
                     arr = [];
                     map.set(owner, arr);
+                }
+                // Extract pivot data if columns were requested
+                if (columns.length > 0) {
+                    const pivotObj = {};
+                    for (const col of columns) {
+                        const pivotKey = `${alias}__${col}`;
+                        if (pivotKey in rel) {
+                            pivotObj[col] = rel[pivotKey];
+                        }
+                    }
+                    if (Object.keys(pivotObj).length > 0) {
+                        rel[alias] = pivotObj;
+                    }
                 }
                 delete rel['__pivot_fk'];
                 arr.push(rel);
@@ -1046,6 +1220,13 @@ class QueryBuilder {
         }
         return result ?? null;
     }
+    async firstOrFail() {
+        const result = await this.first();
+        if (!result) {
+            throw new Error('No results found for query');
+        }
+        return result;
+    }
     async get() {
         if (!Eloquent.connection)
             throw new Error('Database connection not initialized');
@@ -1053,6 +1234,8 @@ class QueryBuilder {
         const main = this.buildSelectSql({ includeOrderLimit: !hasUnions });
         let sql = main.sql;
         let allParams = [...main.params];
+        // Debug logging
+        this.debugLog('Executing query', { sql, params: allParams, hasUnions });
         if (hasUnions) {
             for (const union of this.unions) {
                 const unionData = union.query.buildSelectSql({ includeOrderLimit: false });
@@ -1093,6 +1276,15 @@ class QueryBuilder {
             // Zod validation/casting if schema provided
             const schema = this.model.schema;
             const data = schema ? schema.parse(row) : row;
+            // Apply model accessors/mutators if available
+            const casts = this.model.casts;
+            if (casts) {
+                for (const [key, castType] of Object.entries(casts)) {
+                    if (key in data) {
+                        data[key] = this.applyCast(data[key], castType);
+                    }
+                }
+            }
             Object.assign(instance, data);
             return this.createProxiedInstance(instance);
         });
@@ -1113,6 +1305,12 @@ class QueryBuilder {
                 // no-op if defineProperty fails
             }
         }
+        // Debug logging - query completed
+        this.debugLog('Query completed', {
+            resultCount: instances.length,
+            hasRelations: (this.withRelations?.length ?? 0) > 0,
+            relations: this.withRelations
+        });
         return collection;
     }
     buildSelectSql(options) {
@@ -1128,6 +1326,19 @@ class QueryBuilder {
             }
         }
         const allConditions = this.conditions ? JSON.parse(JSON.stringify(this.conditions)) : [];
+        // Apply global scopes
+        const globalScopes = this.model.globalScopes;
+        if (globalScopes) {
+            for (const scope of globalScopes) {
+                if (typeof scope === 'function') {
+                    const scopeQuery = new QueryBuilder(this.model);
+                    scope.call(this.model, scopeQuery);
+                    if (scopeQuery.conditions.length > 0) {
+                        allConditions.push({ operator: 'AND', group: scopeQuery.conditions });
+                    }
+                }
+            }
+        }
         const soft = this.model.softDeletes;
         if (soft) {
             if (this.trashedMode === 'default') {
@@ -1294,6 +1505,15 @@ class Eloquent {
     static isAutomaticallyEagerLoadRelationshipsEnabled() {
         return Eloquent.automaticallyEagerLoadRelationshipsEnabled;
     }
+    static enableDebug(logger) {
+        Eloquent.debugEnabled = true;
+        if (logger) {
+            Eloquent.debugLogger = logger;
+        }
+    }
+    static disableDebug() {
+        Eloquent.debugEnabled = false;
+    }
     static raw(value) {
         return value;
     }
@@ -1339,13 +1559,31 @@ class Eloquent {
             return proxy;
         };
         const fake = Object.create(proto);
-        fake.belongsTo = (related, foreignKey, ownerKey = 'id') => makeStub({ type: 'belongsTo', model: related, foreignKey, ownerKey });
-        fake.hasMany = (related, foreignKey, localKey = 'id') => makeStub({ type: 'hasMany', model: related, foreignKey, localKey });
-        fake.hasOne = (related, foreignKey, localKey = 'id') => makeStub({ type: 'hasOne', model: related, foreignKey, localKey });
-        fake.morphOne = (related, name, typeColumn, idColumn, localKey = 'id') => makeStub({ type: 'morphOne', model: related, morphName: name, typeColumn, idColumn, localKey });
-        fake.morphMany = (related, name, typeColumn, idColumn, localKey = 'id') => makeStub({ type: 'morphMany', model: related, morphName: name, typeColumn, idColumn, localKey });
+        fake.belongsTo = (related, foreignKey, ownerKey = 'id') => {
+            const resolvedRelated = typeof related === 'string' ? related : related;
+            return makeStub({ type: 'belongsTo', model: resolvedRelated, foreignKey, ownerKey });
+        };
+        fake.hasMany = (related, foreignKey, localKey = 'id') => {
+            const resolvedRelated = typeof related === 'string' ? related : related;
+            return makeStub({ type: 'hasMany', model: resolvedRelated, foreignKey, localKey });
+        };
+        fake.hasOne = (related, foreignKey, localKey = 'id') => {
+            const resolvedRelated = typeof related === 'string' ? related : related;
+            return makeStub({ type: 'hasOne', model: resolvedRelated, foreignKey, localKey });
+        };
+        fake.morphOne = (related, name, typeColumn, idColumn, localKey = 'id') => {
+            const resolvedRelated = typeof related === 'string' ? related : related;
+            return makeStub({ type: 'morphOne', model: resolvedRelated, morphName: name, typeColumn, idColumn, localKey });
+        };
+        fake.morphMany = (related, name, typeColumn, idColumn, localKey = 'id') => {
+            const resolvedRelated = typeof related === 'string' ? related : related;
+            return makeStub({ type: 'morphMany', model: resolvedRelated, morphName: name, typeColumn, idColumn, localKey });
+        };
         fake.morphTo = (name, typeColumn, idColumn) => makeStub({ type: 'morphTo', morphName: name, typeColumn, idColumn });
-        fake.belongsToMany = (related, table, foreignPivotKey, relatedPivotKey, parentKey = 'id', relatedKey = 'id') => makeStub({ type: 'belongsToMany', model: related, table, foreignPivotKey, relatedPivotKey, parentKey, relatedKey });
+        fake.belongsToMany = (related, table, foreignPivotKey, relatedPivotKey, parentKey = 'id', relatedKey = 'id') => {
+            const resolvedRelated = typeof related === 'string' ? related : related;
+            return makeStub({ type: 'belongsToMany', model: resolvedRelated, table, foreignPivotKey, relatedPivotKey, parentKey, relatedKey });
+        };
         let result;
         try {
             result = relationFn.call(fake);
@@ -1359,16 +1597,56 @@ class Eloquent {
         return null;
     }
     belongsTo(related, foreignKey, ownerKey = 'id') {
-        return related.query().where(ownerKey, this[foreignKey]);
+        if (typeof related === 'string') {
+            // Resolve model from morph map
+            const ModelClass = Eloquent.getModelForMorphType(related);
+            if (!ModelClass) {
+                throw new Error(`Model '${related}' not found in morph map`);
+            }
+            return ModelClass.query().where(ownerKey, this[foreignKey]);
+        }
+        else {
+            return related.query().where(ownerKey, this[foreignKey]);
+        }
     }
     hasMany(related, foreignKey, localKey = 'id') {
-        return related.query().where(foreignKey, this[localKey]);
+        if (typeof related === 'string') {
+            // Resolve model from morph map
+            const ModelClass = Eloquent.getModelForMorphType(related);
+            if (!ModelClass) {
+                throw new Error(`Model '${related}' not found in morph map`);
+            }
+            return ModelClass.query().where(foreignKey, this[localKey]);
+        }
+        else {
+            return related.query().where(foreignKey, this[localKey]);
+        }
     }
     hasOne(related, foreignKey, localKey = 'id') {
-        return related.query().where(foreignKey, this[localKey]);
+        if (typeof related === 'string') {
+            // Resolve model from morph map
+            const ModelClass = Eloquent.getModelForMorphType(related);
+            if (!ModelClass) {
+                throw new Error(`Model '${related}' not found in morph map`);
+            }
+            return ModelClass.query().where(foreignKey, this[localKey]);
+        }
+        else {
+            return related.query().where(foreignKey, this[localKey]);
+        }
     }
     hasOneOfMany(related, foreignKey, column = 'created_at', aggregate = 'max', localKey = 'id') {
-        return related.query().where(foreignKey, this[localKey]).ofMany(column, aggregate);
+        if (typeof related === 'string') {
+            // Resolve model from morph map
+            const ModelClass = Eloquent.getModelForMorphType(related);
+            if (!ModelClass) {
+                throw new Error(`Model '${related}' not found in morph map`);
+            }
+            return ModelClass.query().where(foreignKey, this[localKey]).ofMany(column, aggregate);
+        }
+        else {
+            return related.query().where(foreignKey, this[localKey]).ofMany(column, aggregate);
+        }
     }
     latestOfMany(related, foreignKey, column = 'created_at', localKey = 'id') {
         return this.hasOneOfMany(related, foreignKey, column, 'max', localKey);
@@ -1380,13 +1658,33 @@ class Eloquent {
         const tCol = typeColumn || `${name}_type`;
         const iCol = idColumn || `${name}_id`;
         const morphTypes = Eloquent.getPossibleMorphTypesForModel(this.constructor);
-        return related.query().whereIn(tCol, morphTypes).where(iCol, this[localKey]);
+        if (typeof related === 'string') {
+            // Resolve model from morph map
+            const ModelClass = Eloquent.getModelForMorphType(related);
+            if (!ModelClass) {
+                throw new Error(`Model '${related}' not found in morph map`);
+            }
+            return ModelClass.query().whereIn(tCol, morphTypes).where(iCol, this[localKey]);
+        }
+        else {
+            return related.query().whereIn(tCol, morphTypes).where(iCol, this[localKey]);
+        }
     }
     morphOneOfMany(related, name, column = 'created_at', aggregate = 'max', typeColumn, idColumn, localKey = 'id') {
         const tCol = typeColumn || `${name}_type`;
         const iCol = idColumn || `${name}_id`;
         const morphTypes = Eloquent.getPossibleMorphTypesForModel(this.constructor);
-        return related.query().whereIn(tCol, morphTypes).where(iCol, this[localKey]).ofMany(column, aggregate);
+        if (typeof related === 'string') {
+            // Resolve model from morph map
+            const ModelClass = Eloquent.getModelForMorphType(related);
+            if (!ModelClass) {
+                throw new Error(`Model '${related}' not found in morph map`);
+            }
+            return ModelClass.query().whereIn(tCol, morphTypes).where(iCol, this[localKey]).ofMany(column, aggregate);
+        }
+        else {
+            return related.query().whereIn(tCol, morphTypes).where(iCol, this[localKey]).ofMany(column, aggregate);
+        }
     }
     latestMorphOne(related, name, column = 'created_at', typeColumn, idColumn, localKey = 'id') {
         return this.morphOneOfMany(related, name, column, 'max', typeColumn, idColumn, localKey);
@@ -1398,7 +1696,15 @@ class Eloquent {
         const tCol = typeColumn || `${name}_type`;
         const iCol = idColumn || `${name}_id`;
         const morphTypes = Eloquent.getPossibleMorphTypesForModel(this.constructor);
-        return related.query().whereIn(tCol, morphTypes).where(iCol, this[localKey]);
+        if (typeof related === 'string') {
+            // If related is a table name, create a generic query
+            const tableName = related;
+            return new QueryBuilder({}).table(tableName).whereIn(tCol, morphTypes).where(iCol, this[localKey]);
+        }
+        else {
+            // Normal case with model class
+            return related.query().whereIn(tCol, morphTypes).where(iCol, this[localKey]);
+        }
     }
     morphTo(name, typeColumn, idColumn) {
         const tCol = typeColumn || `${name}_type`;
@@ -1406,11 +1712,10 @@ class Eloquent {
         const typeValue = this[tCol];
         const idValue = this[iCol];
         const ModelCtor = Eloquent.getModelForMorphType(typeValue);
-        if (!ModelCtor)
-            return {
-                first: async () => null,
-                get: async () => []
-            };
+        if (!ModelCtor) {
+            // Return a query builder that will never match anything
+            return new QueryBuilder({}).whereRaw('0=1');
+        }
         return ModelCtor.query().where('id', idValue);
     }
     static registerMorphMap(map) {
@@ -1431,10 +1736,12 @@ class Eloquent {
             return null;
         if (Eloquent.morphMap[type])
             return Eloquent.morphMap[type];
-        // fallback: global class name
-        const anyGlobal = globalThis;
-        if (anyGlobal[type])
-            return anyGlobal[type];
+        // Try to resolve from the morph map values (in case the key format doesn't match)
+        for (const [key, modelClass] of Object.entries(Eloquent.morphMap)) {
+            if (key === type || modelClass.morphClass === type) {
+                return modelClass;
+            }
+        }
         // fallback: search known constructors by morphClass/static
         // Note: without a central registry, we rely on provided map/global.
         return null;
@@ -1466,18 +1773,53 @@ class Eloquent {
         return related.query().join(throughTable, `${relatedTable}.${fk2}`, '=', `${throughTable}.${secondLocalKey}`).where(`${throughTable}.${fk1}`, this[localKey]);
     }
     hasManyThrough(related, through, firstKey, secondKey, localKey = 'id', secondLocalKey = 'id') {
-        const fk1 = firstKey || `${through.name.toLowerCase()}_id`;
-        const fk2 = secondKey || `${related.name.toLowerCase()}_id`;
-        const throughTable = through.table || through.name.toLowerCase() + 's';
-        const relatedTable = related.table || related.name.toLowerCase() + 's';
-        return related.query().join(throughTable, `${relatedTable}.${fk2}`, '=', `${throughTable}.${secondLocalKey}`).where(`${throughTable}.${fk1}`, this[localKey]);
+        // Resolve models from morph map if strings are provided
+        const ResolvedRelated = typeof related === 'string'
+            ? Eloquent.getModelForMorphType(related)
+            : related;
+        const ResolvedThrough = typeof through === 'string'
+            ? Eloquent.getModelForMorphType(through)
+            : through;
+        if (!ResolvedRelated || !ResolvedThrough) {
+            throw new Error(`Models '${related}' or '${through}' not found in morph map`);
+        }
+        const fk1 = firstKey || `${ResolvedThrough.name.toLowerCase()}_id`;
+        const fk2 = secondKey || `${ResolvedRelated.name.toLowerCase()}_id`;
+        const throughTable = ResolvedThrough.table || ResolvedThrough.name.toLowerCase() + 's';
+        const relatedTable = ResolvedRelated.table || ResolvedRelated.name.toLowerCase() + 's';
+        if (typeof related === 'string') {
+            return ResolvedRelated.query().join(throughTable, `${relatedTable}.${fk2}`, '=', `${throughTable}.${secondLocalKey}`).where(`${throughTable}.${fk1}`, this[localKey]);
+        }
+        else {
+            return ResolvedRelated.query().join(throughTable, `${relatedTable}.${fk2}`, '=', `${throughTable}.${secondLocalKey}`).where(`${throughTable}.${fk1}`, this[localKey]);
+        }
     }
     belongsToMany(related, table, foreignPivotKey, relatedPivotKey, parentKey = 'id', relatedKey = 'id') {
-        const pivotTable = table || [this.constructor.name.toLowerCase(), related.name.toLowerCase()].sort().join('_');
-        const fpk = foreignPivotKey || `${this.constructor.name.toLowerCase()}_id`;
-        const rpk = relatedPivotKey || `${related.name.toLowerCase()}_id`;
-        const relatedTable = related.table || related.name.toLowerCase() + 's';
-        return related.query().join(pivotTable, `${relatedTable}.${relatedKey}`, '=', `${pivotTable}.${rpk}`).where(`${pivotTable}.${fpk}`, this[parentKey]);
+        if (typeof related === 'string') {
+            // Resolve model from morph map
+            const ModelClass = Eloquent.getModelForMorphType(related);
+            if (!ModelClass) {
+                throw new Error(`Model '${related}' not found in morph map`);
+            }
+            const pivotTable = table || [this.constructor.name.toLowerCase(), ModelClass.name.toLowerCase()].sort().join('_');
+            const fpk = foreignPivotKey || `${this.constructor.name.toLowerCase()}_id`;
+            const rpk = relatedPivotKey || `${ModelClass.name.toLowerCase()}_id`;
+            const relatedTable = ModelClass.table || ModelClass.name.toLowerCase() + 's';
+            const qb = ModelClass.query().join(pivotTable, `${relatedTable}.${relatedKey}`, '=', `${pivotTable}.${rpk}`).where(`${pivotTable}.${fpk}`, this[parentKey]);
+            // Add pivot configuration for withPivot support
+            qb.pivotConfig = { table: pivotTable, alias: 'pivot', columns: new Set() };
+            return qb;
+        }
+        else {
+            const pivotTable = table || [this.constructor.name.toLowerCase(), related.name.toLowerCase()].sort().join('_');
+            const fpk = foreignPivotKey || `${this.constructor.name.toLowerCase()}_id`;
+            const rpk = relatedPivotKey || `${related.name.toLowerCase()}_id`;
+            const relatedTable = related.table || related.name.toLowerCase() + 's';
+            const qb = related.query().join(pivotTable, `${relatedTable}.${relatedKey}`, '=', `${pivotTable}.${rpk}`).where(`${pivotTable}.${fpk}`, this[parentKey]);
+            // Add pivot configuration for withPivot support
+            qb.pivotConfig = { table: pivotTable, alias: 'pivot', columns: new Set() };
+            return qb;
+        }
     }
     static getProperty(key) {
         return this[key];
@@ -1510,6 +1852,10 @@ class Eloquent {
     }
     async loadMissing(relations) {
         await this.constructor.loadMissing([this], relations);
+        return this;
+    }
+    async loadCount(relations) {
+        await this.constructor.loadCount([this], relations);
         return this;
     }
     async loadForAll(...args) {
@@ -1575,6 +1921,35 @@ class Eloquent {
             return;
         await this.load(instancesToLoad, relations);
     }
+    static async loadCount(instances, relations) {
+        if (instances.length === 0)
+            return;
+        const model = instances[0].constructor;
+        const qb = model.query();
+        // Apply the relations to the query builder with count
+        qb.withCount(relations);
+        // Load the relations by calling get() on a query that matches the instances
+        const ids = instances.map(inst => inst.id).filter(id => id !== null && id !== undefined);
+        if (ids.length === 0)
+            return;
+        const loadedInstances = await model.query().withCount(relations).whereIn('id', ids).get();
+        // Create a map of loaded instances by ID
+        const loadedMap = new Map(loadedInstances.map(inst => [inst.id, inst]));
+        // Determine relation names to copy count properties
+        const relationNames = this.parseRelationNames(relations);
+        // Copy count properties from loaded instances to original instances
+        for (const instance of instances) {
+            const loaded = loadedMap.get(instance.id);
+            if (!loaded)
+                continue;
+            for (const name of relationNames) {
+                const countProp = `${name}_count`;
+                if (loaded[countProp] !== undefined) {
+                    instance[countProp] = loaded[countProp];
+                }
+            }
+        }
+    }
     static parseRelationNames(relations) {
         if (typeof relations === 'string') {
             const base = relations.split(':')[0];
@@ -1589,10 +1964,14 @@ class Eloquent {
         return [];
     }
 }
-Eloquent.fillable = [];
 Eloquent.hidden = [];
 Eloquent.with = [];
 Eloquent.connection = null;
 Eloquent.morphMap = {};
 Eloquent.automaticallyEagerLoadRelationshipsEnabled = false;
+// Debug logging
+Eloquent.debugEnabled = false;
+Eloquent.debugLogger = (message, data) => {
+    console.log(`[Eloquent Debug] ${message}`, data || '');
+};
 export default Eloquent;
