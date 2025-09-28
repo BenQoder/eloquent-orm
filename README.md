@@ -854,6 +854,19 @@ This is a specialized read-only ORM. When contributing:
 4. Add Zod integration for new features
 5. Include comprehensive tests
 
+## 🎯 Explicit Relationship Typing
+
+For maximum type safety, you can explicitly specify relationship shapes:
+
+```typescript
+const orders = await Order.query().with(['business.owner', 'cart.items.product']).get<{
+	business: Business & { owner: User };
+	cart: Cart & { items: (CartItem & { product: Product })[] };
+}>();
+```
+
+This provides complete type inference for nested relationships and works with all query methods: `get()`, `first()`, `firstOrFail()`, `find()`, `findOrFail()`, and instance methods: `load()`, `loadMissing()`, `loadForAll()`.
+
 ## 📄 License
 
 MIT License - see LICENSE file for details.

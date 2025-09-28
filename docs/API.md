@@ -952,4 +952,54 @@ const users = await User.query().with('posts').get();
 await User.loadMissing(users, 'profile');
 ```
 
+## Explicit Relationship Typing
+
+You can explicitly specify the shape of loaded relationships for better type safety:
+
+```typescript
+// Define exact relationship structure
+const ordersWithFullRelations = await Order.query()
+	.with(['business', 'business.owner', 'user', 'cart', 'cart.items', 'cart.items.product'])
+	.limit(2)
+	.get<{
+		business: Business & {
+			owner: User;
+		};
+		user: User;
+		cart: Cart & {
+			items: (CartItem & {
+				product: Product;
+			})[];
+		};
+	}>();
+```
+
+For instance methods, you can also specify explicit types:
+
+```typescript
+// Load relationships on existing instances
+const order = await Order.find(1);
+const loadedOrder = await order.load<Order & { user: User; cart: Cart }>('user', 'cart');
+
+// Load missing relationships
+const orderWithMore = await loadedOrder.loadMissing<
+	Order & {
+		user: User;
+		cart: Cart;
+		business: Business;
+	}
+>('business');
+
+// Load all relationships at once
+const fullyLoaded = await order.loadForAll<
+	Order & {
+		user: User;
+		cart: Cart & { items: CartItem[] };
+		business: Business;
+	}
+>(['user', 'cart.items', 'business']);
+```
+
+This works with all query methods: `get()`, `first()`, `firstOrFail()`, `find()`, `findOrFail()`, and instance methods: `load()`, `loadMissing()`, `loadForAll()`.
+
 This API reference provides complete documentation for all available methods in the Eloquent ORM.

@@ -268,16 +268,20 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         return row ? (row as any)[column as string] : null;
     }
 
-    async find(id: any): Promise<any> {
+    async find<TExplicit = WithRelations<InstanceType<M>, TWith>>(id: any): Promise<TExplicit | null>;
+    async find<TExplicit>(id: any): Promise<TExplicit | null>;
+    async find<TExplicit = WithRelations<InstanceType<M>, TWith>>(id: any): Promise<TExplicit | null> {
         return this.where('id', id).first();
     }
 
-    async findOrFail(id: any): Promise<WithRelations<InstanceType<M>, TWith>> {
+    async findOrFail<TExplicit = WithRelations<InstanceType<M>, TWith>>(id: any): Promise<TExplicit>;
+    async findOrFail<TExplicit>(id: any): Promise<TExplicit>;
+    async findOrFail<TExplicit = WithRelations<InstanceType<M>, TWith>>(id: any): Promise<TExplicit> {
         const result = await this.find(id);
         if (!result) {
             throw new Error(`Model not found with id: ${id}`);
         }
-        return result;
+        return result as TExplicit;
     }
 
     // Removed write operations (insert, insertGetId, update, delete) to keep ORM read-only
@@ -584,7 +588,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             return { sql: 'SELECT 1 WHERE 0=1', params: [] };
         }
         const parentTable = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
-        const RelatedModel = cfg.model as typeof Eloquent;
+        const RelatedModel = typeof cfg.model === 'string' ? (Eloquent as any).getModelForMorphType(cfg.model) : cfg.model;
         const relatedTable = (RelatedModel as any).table || RelatedModel.name.toLowerCase() + 's';
         const relQB = RelatedModel.query();
         if (callback) callback(relQB);
@@ -916,7 +920,12 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         if (!config) return;
         const type = config.type;
         if (type === 'belongsTo') {
-            const RelatedModel = config.model;
+            const RelatedModel = typeof config.model === 'string'
+                ? (Eloquent as any).getModelForMorphType(config.model)
+                : config.model;
+            if (!RelatedModel) {
+                throw new Error(`Model '${config.model}' not found in morph map`);
+            }
             const foreignKey = config.foreignKey;
             const ownerKey = config.ownerKey || 'id';
             const foreignKeys = instances.map(inst => inst[foreignKey]).filter(id => id !== null && id !== undefined);
@@ -948,7 +957,12 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 } catch { /* no-op */ }
             }
         } else if (type === 'hasMany') {
-            const RelatedModel = config.model;
+            const RelatedModel = typeof config.model === 'string'
+                ? (Eloquent as any).getModelForMorphType(config.model)
+                : config.model;
+            if (!RelatedModel) {
+                throw new Error(`Model '${config.model}' not found in morph map`);
+            }
             const foreignKey = config.foreignKey;
             const localKey = config.localKey || 'id';
             const localKeys = instances.map(inst => inst[localKey]).filter(id => id !== null && id !== undefined);
@@ -983,7 +997,12 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 } catch { /* no-op */ }
             }
         } else if (type === 'hasOne') {
-            const RelatedModel = config.model;
+            const RelatedModel = typeof config.model === 'string'
+                ? (Eloquent as any).getModelForMorphType(config.model)
+                : config.model;
+            if (!RelatedModel) {
+                throw new Error(`Model '${config.model}' not found in morph map`);
+            }
             const foreignKey = config.foreignKey;
             const localKey = config.localKey || 'id';
             const localKeys = instances.map(inst => inst[localKey]).filter(id => id !== null && id !== undefined);
@@ -1017,7 +1036,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 } catch { /* no-op */ }
             }
         } else if (type === 'morphOne') {
-            const RelatedModel = config.model;
+            const RelatedModel = typeof config.model === 'string' ? (Eloquent as any).getModelForMorphType(config.model) : config.model;
             const name = config.morphName;
             const typeColumn = config.typeColumn || `${name}_type`;
             const idColumn = config.idColumn || `${name}_id`;
@@ -1054,7 +1073,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 } catch { /* no-op */ }
             }
         } else if (type === 'morphMany') {
-            const RelatedModel = config.model;
+            const RelatedModel = typeof config.model === 'string' ? (Eloquent as any).getModelForMorphType(config.model) : config.model;
             const name = config.morphName;
             const typeColumn = config.typeColumn || `${name}_type`;
             const idColumn = config.idColumn || `${name}_id`;
@@ -1139,7 +1158,12 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 }
             }
         } else if (type === 'belongsToMany') {
-            const RelatedModel = config.model as typeof Eloquent;
+            const RelatedModel = typeof config.model === 'string'
+                ? (Eloquent as any).getModelForMorphType(config.model)
+                : config.model;
+            if (!RelatedModel) {
+                throw new Error(`Model '${config.model}' not found in morph map`);
+            }
             const relatedTable = (RelatedModel as any).table || RelatedModel.name.toLowerCase() + 's';
             const pivotTable = config.table || [model.name.toLowerCase(), RelatedModel.name.toLowerCase()].sort().join('_');
             const fpk = config.foreignPivotKey || `${model.name.toLowerCase()}_id`;
@@ -1279,7 +1303,9 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         return { sql, params };
     }
 
-    async first(): Promise<WithRelations<InstanceType<M>, TWith> | null> {
+    async first<TExplicit = WithRelations<InstanceType<M>, TWith>>(): Promise<TExplicit | null>;
+    async first<TExplicit>(): Promise<TExplicit | null>;
+    async first<TExplicit = WithRelations<InstanceType<M>, TWith>>(): Promise<TExplicit | null> {
         if (!Eloquent.connection) throw new Error('Database connection not initialized');
         const one = this.clone().limit(1);
         const rows = await one.get();
@@ -1290,15 +1316,19 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         return result as any ?? null;
     }
 
-    async firstOrFail(): Promise<WithRelations<InstanceType<M>, TWith>> {
+    async firstOrFail<TExplicit = WithRelations<InstanceType<M>, TWith>>(): Promise<TExplicit>;
+    async firstOrFail<TExplicit>(): Promise<TExplicit>;
+    async firstOrFail<TExplicit = WithRelations<InstanceType<M>, TWith>>(): Promise<TExplicit> {
         const result = await this.first();
         if (!result) {
             throw new Error('No results found for query');
         }
-        return result;
+        return result as TExplicit;
     }
 
-    async get(): Promise<Collection<WithRelations<InstanceType<M>, TWith>>> {
+    async get<TExplicit extends InstanceType<M> & Record<string, any> = WithRelations<InstanceType<M>, TWith>>(): Promise<Collection<TExplicit>>;
+    async get<TExplicit extends InstanceType<M> & Record<string, any>>(): Promise<Collection<TExplicit>>;
+    async get<TExplicit extends InstanceType<M> & Record<string, any> = WithRelations<InstanceType<M>, TWith>>(): Promise<Collection<TExplicit>> {
         if (!Eloquent.connection) throw new Error('Database connection not initialized');
         const hasUnions = this.unions.length > 0;
         const main = this.buildSelectSql({ includeOrderLimit: !hasUnions });
@@ -1383,7 +1413,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             relations: this.withRelations
         });
 
-        return collection;
+        return collection as Collection<TExplicit>;
     }
 
     private buildSelectSql(options?: { includeOrderLimit?: boolean }): { sql: string; params: any[] } {
@@ -1572,8 +1602,8 @@ class Eloquent {
     public static automaticallyEagerLoadRelationshipsEnabled: boolean = false;
 
     // Debug logging
-    private static debugEnabled = false;
-    private static debugLogger: (message: string, data?: any) => void = (message, data) => {
+    public static debugEnabled = false;
+    public static debugLogger: (message: string, data?: any) => void = (message, data) => {
         console.log(`[Eloquent Debug] ${message}`, data || '');
     };
 
@@ -1641,20 +1671,38 @@ class Eloquent {
             return proxy;
         };
         const fake: any = Object.create(proto);
-        fake.belongsTo = (related: typeof Eloquent, foreignKey: string, ownerKey = 'id') => makeStub({ type: 'belongsTo', model: related, foreignKey, ownerKey });
-        fake.hasMany = (related: typeof Eloquent, foreignKey: string, localKey = 'id') => makeStub({ type: 'hasMany', model: related, foreignKey, localKey });
-        fake.hasOne = (related: typeof Eloquent, foreignKey: string, localKey = 'id') => makeStub({ type: 'hasOne', model: related, foreignKey, localKey });
-        fake.morphOne = (related: typeof Eloquent, name: string, typeColumn?: string, idColumn?: string, localKey = 'id') => makeStub({ type: 'morphOne', model: related, morphName: name, typeColumn, idColumn, localKey });
-        fake.morphMany = (related: typeof Eloquent, name: string, typeColumn?: string, idColumn?: string, localKey = 'id') => makeStub({ type: 'morphMany', model: related, morphName: name, typeColumn, idColumn, localKey });
+        fake.belongsTo = (related: typeof Eloquent | string, foreignKey: string, ownerKey = 'id') => {
+            const resolvedRelated = typeof related === 'string' ? related : related;
+            return makeStub({ type: 'belongsTo', model: resolvedRelated, foreignKey, ownerKey });
+        };
+        fake.hasMany = (related: typeof Eloquent | string, foreignKey: string, localKey = 'id') => {
+            const resolvedRelated = typeof related === 'string' ? related : related;
+            return makeStub({ type: 'hasMany', model: resolvedRelated, foreignKey, localKey });
+        };
+        fake.hasOne = (related: typeof Eloquent | string, foreignKey: string, localKey = 'id') => {
+            const resolvedRelated = typeof related === 'string' ? related : related;
+            return makeStub({ type: 'hasOne', model: resolvedRelated, foreignKey, localKey });
+        };
+        fake.morphOne = (related: typeof Eloquent | string, name: string, typeColumn?: string, idColumn?: string, localKey = 'id') => {
+            const resolvedRelated = typeof related === 'string' ? related : related;
+            return makeStub({ type: 'morphOne', model: resolvedRelated, morphName: name, typeColumn, idColumn, localKey });
+        };
+        fake.morphMany = (related: typeof Eloquent | string, name: string, typeColumn?: string, idColumn?: string, localKey = 'id') => {
+            const resolvedRelated = typeof related === 'string' ? related : related;
+            return makeStub({ type: 'morphMany', model: resolvedRelated, morphName: name, typeColumn, idColumn, localKey });
+        };
         fake.morphTo = (name: string, typeColumn?: string, idColumn?: string) => makeStub({ type: 'morphTo', morphName: name, typeColumn, idColumn });
         fake.belongsToMany = (
-            related: typeof Eloquent,
+            related: typeof Eloquent | string,
             table?: string,
             foreignPivotKey?: string,
             relatedPivotKey?: string,
             parentKey = 'id',
             relatedKey = 'id'
-        ) => makeStub({ type: 'belongsToMany', model: related, table, foreignPivotKey, relatedPivotKey, parentKey, relatedKey });
+        ) => {
+            const resolvedRelated = typeof related === 'string' ? related : related;
+            return makeStub({ type: 'belongsToMany', model: resolvedRelated, table, foreignPivotKey, relatedPivotKey, parentKey, relatedKey });
+        };
         let result: any;
         try {
             result = relationFn.call(fake);
@@ -1667,49 +1715,115 @@ class Eloquent {
         return null;
     }
 
-    belongsTo<T extends typeof Eloquent>(related: T, foreignKey: string, ownerKey = 'id'): QueryBuilder<T, never> {
-        return related.query().where(ownerKey, (this as any)[foreignKey]);
+    belongsTo<T extends typeof Eloquent>(related: T, foreignKey: string, ownerKey?: string): QueryBuilder<T, never>;
+    belongsTo(related: string, foreignKey: string, ownerKey?: string): QueryBuilder<any, never>;
+    belongsTo<T extends typeof Eloquent>(related: T | string, foreignKey: string, ownerKey = 'id'): QueryBuilder<T, never> | QueryBuilder<any, never> {
+        if (typeof related === 'string') {
+            // Resolve model from morph map
+            const ModelClass = (Eloquent as any).getModelForMorphType(related);
+            if (!ModelClass) {
+                throw new Error(`Model '${related}' not found in morph map`);
+            }
+            return ModelClass.query().where(ownerKey, (this as any)[foreignKey]) as QueryBuilder<any, never>;
+        } else {
+            return related.query().where(ownerKey, (this as any)[foreignKey]) as QueryBuilder<T, never>;
+        }
     }
 
-    hasMany<T extends typeof Eloquent>(related: T, foreignKey: string, localKey = 'id'): QueryBuilder<T, never> {
-        return related.query().where(foreignKey, (this as any)[localKey]);
+    hasMany<T extends typeof Eloquent>(related: T, foreignKey: string, localKey?: string): QueryBuilder<T, never>;
+    hasMany(related: string, foreignKey: string, localKey?: string): QueryBuilder<any, never>;
+    hasMany<T extends typeof Eloquent>(related: T | string, foreignKey: string, localKey = 'id'): QueryBuilder<T, never> | QueryBuilder<any, never> {
+        if (typeof related === 'string') {
+            // Resolve model from morph map
+            const ModelClass = (Eloquent as any).getModelForMorphType(related);
+            if (!ModelClass) {
+                throw new Error(`Model '${related}' not found in morph map`);
+            }
+            return ModelClass.query().where(foreignKey, (this as any)[localKey]) as QueryBuilder<any, never>;
+        } else {
+            return related.query().where(foreignKey, (this as any)[localKey]) as QueryBuilder<T, never>;
+        }
     }
 
-    hasOne<T extends typeof Eloquent>(related: T, foreignKey: string, localKey = 'id'): QueryBuilder<T, never> {
-        return related.query().where(foreignKey, (this as any)[localKey]);
+    hasOne<T extends typeof Eloquent>(related: T, foreignKey: string, localKey?: string): QueryBuilder<T, never>;
+    hasOne(related: string, foreignKey: string, localKey?: string): QueryBuilder<any, never>;
+    hasOne<T extends typeof Eloquent>(related: T | string, foreignKey: string, localKey = 'id'): QueryBuilder<T, never> | QueryBuilder<any, never> {
+        if (typeof related === 'string') {
+            // Resolve model from morph map
+            const ModelClass = (Eloquent as any).getModelForMorphType(related);
+            if (!ModelClass) {
+                throw new Error(`Model '${related}' not found in morph map`);
+            }
+            return ModelClass.query().where(foreignKey, (this as any)[localKey]) as QueryBuilder<any, never>;
+        } else {
+            return related.query().where(foreignKey, (this as any)[localKey]) as QueryBuilder<T, never>;
+        }
     }
 
-    hasOneOfMany<T extends typeof Eloquent>(related: T, foreignKey: string, column = 'created_at', aggregate: 'min' | 'max' = 'max', localKey = 'id'): QueryBuilder<T, never> {
-        return related.query().where(foreignKey, (this as any)[localKey]).ofMany(column, aggregate);
+    hasOneOfMany<T extends typeof Eloquent>(related: T, foreignKey: string, column?: string, aggregate?: 'min' | 'max', localKey?: string): QueryBuilder<T, never>;
+    hasOneOfMany(related: string, foreignKey: string, column?: string, aggregate?: 'min' | 'max', localKey?: string): QueryBuilder<any, never>;
+    hasOneOfMany<T extends typeof Eloquent>(related: T | string, foreignKey: string, column = 'created_at', aggregate: 'min' | 'max' = 'max', localKey = 'id'): QueryBuilder<T, never> | QueryBuilder<any, never> {
+        if (typeof related === 'string') {
+            // Resolve model from morph map
+            const ModelClass = (Eloquent as any).getModelForMorphType(related);
+            if (!ModelClass) {
+                throw new Error(`Model '${related}' not found in morph map`);
+            }
+            return ModelClass.query().where(foreignKey, (this as any)[localKey]).ofMany(column, aggregate) as QueryBuilder<any, never>;
+        } else {
+            return related.query().where(foreignKey, (this as any)[localKey]).ofMany(column, aggregate) as QueryBuilder<T, never>;
+        }
     }
 
-    latestOfMany(related: typeof Eloquent, foreignKey: string, column = 'created_at', localKey = 'id') {
-        return this.hasOneOfMany(related, foreignKey, column, 'max', localKey);
+    latestOfMany(related: typeof Eloquent | string, foreignKey: string, column = 'created_at', localKey = 'id') {
+        return this.hasOneOfMany(related as any, foreignKey, column, 'max', localKey);
     }
 
-    oldestOfMany(related: typeof Eloquent, foreignKey: string, column = 'created_at', localKey = 'id') {
-        return this.hasOneOfMany(related, foreignKey, column, 'min', localKey);
+    oldestOfMany(related: typeof Eloquent | string, foreignKey: string, column = 'created_at', localKey = 'id') {
+        return this.hasOneOfMany(related as any, foreignKey, column, 'min', localKey);
     }
 
-    morphOne<T extends typeof Eloquent>(related: T, name: string, typeColumn?: string, idColumn?: string, localKey = 'id'): QueryBuilder<T, never> {
+    morphOne<T extends typeof Eloquent>(related: T, name: string, typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<T, never>;
+    morphOne(related: string, name: string, typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<any, never>;
+    morphOne<T extends typeof Eloquent>(related: T | string, name: string, typeColumn?: string, idColumn?: string, localKey = 'id'): QueryBuilder<T, never> | QueryBuilder<any, never> {
         const tCol = typeColumn || `${name}_type`;
         const iCol = idColumn || `${name}_id`;
         const morphTypes: string[] = (Eloquent as any).getPossibleMorphTypesForModel(this.constructor as typeof Eloquent);
-        return related.query().whereIn(tCol, morphTypes).where(iCol, (this as any)[localKey]) as QueryBuilder<T, never>;
+
+        if (typeof related === 'string') {
+            // Resolve model from morph map
+            const ModelClass = (Eloquent as any).getModelForMorphType(related);
+            if (!ModelClass) {
+                throw new Error(`Model '${related}' not found in morph map`);
+            }
+            return ModelClass.query().whereIn(tCol, morphTypes).where(iCol, (this as any)[localKey]) as QueryBuilder<any, never>;
+        } else {
+            return related.query().whereIn(tCol, morphTypes).where(iCol, (this as any)[localKey]) as QueryBuilder<T, never>;
+        }
     }
 
-    morphOneOfMany(related: typeof Eloquent, name: string, column = 'created_at', aggregate: 'min' | 'max' = 'max', typeColumn?: string, idColumn?: string, localKey = 'id') {
+    morphOneOfMany(related: typeof Eloquent | string, name: string, column = 'created_at', aggregate: 'min' | 'max' = 'max', typeColumn?: string, idColumn?: string, localKey = 'id') {
         const tCol = typeColumn || `${name}_type`;
         const iCol = idColumn || `${name}_id`;
         const morphTypes: string[] = (Eloquent as any).getPossibleMorphTypesForModel(this.constructor as typeof Eloquent);
-        return related.query().whereIn(tCol, morphTypes).where(iCol, (this as any)[localKey]).ofMany(column, aggregate);
+
+        if (typeof related === 'string') {
+            // Resolve model from morph map
+            const ModelClass = (Eloquent as any).getModelForMorphType(related);
+            if (!ModelClass) {
+                throw new Error(`Model '${related}' not found in morph map`);
+            }
+            return ModelClass.query().whereIn(tCol, morphTypes).where(iCol, (this as any)[localKey]).ofMany(column, aggregate);
+        } else {
+            return related.query().whereIn(tCol, morphTypes).where(iCol, (this as any)[localKey]).ofMany(column, aggregate);
+        }
     }
 
-    latestMorphOne(related: typeof Eloquent, name: string, column = 'created_at', typeColumn?: string, idColumn?: string, localKey = 'id') {
+    latestMorphOne(related: typeof Eloquent | string, name: string, column = 'created_at', typeColumn?: string, idColumn?: string, localKey = 'id') {
         return this.morphOneOfMany(related, name, column, 'max', typeColumn, idColumn, localKey);
     }
 
-    oldestMorphOne(related: typeof Eloquent, name: string, column = 'created_at', typeColumn?: string, idColumn?: string, localKey = 'id') {
+    oldestMorphOne(related: typeof Eloquent | string, name: string, column = 'created_at', typeColumn?: string, idColumn?: string, localKey = 'id') {
         return this.morphOneOfMany(related, name, column, 'min', typeColumn, idColumn, localKey);
     }
 
@@ -1759,9 +1873,14 @@ class Eloquent {
     static getModelForMorphType(type: string): typeof Eloquent | null {
         if (!type) return null;
         if (Eloquent.morphMap[type]) return Eloquent.morphMap[type];
-        // fallback: global class name
-        const anyGlobal: any = globalThis as any;
-        if (anyGlobal[type]) return anyGlobal[type];
+
+        // Try to resolve from the morph map values (in case the key format doesn't match)
+        for (const [key, modelClass] of Object.entries(Eloquent.morphMap)) {
+            if (key === type || (modelClass as any).morphClass === type) {
+                return modelClass;
+            }
+        }
+
         // fallback: search known constructors by morphClass/static
         // Note: without a central registry, we rely on provided map/global.
         return null;
@@ -1791,24 +1910,62 @@ class Eloquent {
         return related.query().join(throughTable, `${relatedTable}.${fk2}`, '=', `${throughTable}.${secondLocalKey}`).where(`${throughTable}.${fk1}`, (this as any)[localKey]) as QueryBuilder<T, never>;
     }
 
-    hasManyThrough<T extends typeof Eloquent>(related: T, through: typeof Eloquent, firstKey?: string, secondKey?: string, localKey = 'id', secondLocalKey = 'id'): QueryBuilder<T, never> {
-        const fk1 = firstKey || `${through.name.toLowerCase()}_id`;
-        const fk2 = secondKey || `${related.name.toLowerCase()}_id`;
-        const throughTable = (through as any).table || through.name.toLowerCase() + 's';
-        const relatedTable = (related as any).table || related.name.toLowerCase() + 's';
-        return related.query().join(throughTable, `${relatedTable}.${fk2}`, '=', `${throughTable}.${secondLocalKey}`).where(`${throughTable}.${fk1}`, (this as any)[localKey]) as QueryBuilder<T, never>;
+    hasManyThrough<T extends typeof Eloquent>(related: T, through: typeof Eloquent, firstKey?: string, secondKey?: string, localKey?: string, secondLocalKey?: string): QueryBuilder<T, never>;
+    hasManyThrough(related: string, through: string, firstKey?: string, secondKey?: string, localKey?: string, secondLocalKey?: string): QueryBuilder<any, never>;
+    hasManyThrough<T extends typeof Eloquent>(related: T | string, through: typeof Eloquent | string, firstKey?: string, secondKey?: string, localKey = 'id', secondLocalKey = 'id'): QueryBuilder<T, never> | QueryBuilder<any, never> {
+        // Resolve models from morph map if strings are provided
+        const ResolvedRelated = typeof related === 'string'
+            ? (Eloquent as any).getModelForMorphType(related)
+            : related;
+        const ResolvedThrough = typeof through === 'string'
+            ? (Eloquent as any).getModelForMorphType(through)
+            : through;
+
+        if (!ResolvedRelated || !ResolvedThrough) {
+            throw new Error(`Models '${related}' or '${through}' not found in morph map`);
+        }
+
+        const fk1 = firstKey || `${ResolvedThrough.name.toLowerCase()}_id`;
+        const fk2 = secondKey || `${ResolvedRelated.name.toLowerCase()}_id`;
+        const throughTable = (ResolvedThrough as any).table || ResolvedThrough.name.toLowerCase() + 's';
+        const relatedTable = (ResolvedRelated as any).table || ResolvedRelated.name.toLowerCase() + 's';
+
+        if (typeof related === 'string') {
+            return ResolvedRelated.query().join(throughTable, `${relatedTable}.${fk2}`, '=', `${throughTable}.${secondLocalKey}`).where(`${throughTable}.${fk1}`, (this as any)[localKey]) as QueryBuilder<any, never>;
+        } else {
+            return ResolvedRelated.query().join(throughTable, `${relatedTable}.${fk2}`, '=', `${throughTable}.${secondLocalKey}`).where(`${throughTable}.${fk1}`, (this as any)[localKey]) as QueryBuilder<T, never>;
+        }
     }
 
-    belongsToMany<T extends typeof Eloquent>(related: T, table?: string, foreignPivotKey?: string, relatedPivotKey?: string, parentKey = 'id', relatedKey = 'id'): QueryBuilder<T, never> {
-        const pivotTable = table || [this.constructor.name.toLowerCase(), related.name.toLowerCase()].sort().join('_');
-        const fpk = foreignPivotKey || `${this.constructor.name.toLowerCase()}_id`;
-        const rpk = relatedPivotKey || `${related.name.toLowerCase()}_id`;
-        const relatedTable = (related as any).table || related.name.toLowerCase() + 's';
-        const qb = related.query().join(pivotTable, `${relatedTable}.${relatedKey}`, '=', `${pivotTable}.${rpk}`).where(`${pivotTable}.${fpk}`, (this as any)[parentKey]);
+    belongsToMany<T extends typeof Eloquent>(related: T, table?: string, foreignPivotKey?: string, relatedPivotKey?: string, parentKey?: string, relatedKey?: string): QueryBuilder<T, never>;
+    belongsToMany(related: string, table?: string, foreignPivotKey?: string, relatedPivotKey?: string, parentKey?: string, relatedKey?: string): QueryBuilder<any, never>;
+    belongsToMany<T extends typeof Eloquent>(related: T | string, table?: string, foreignPivotKey?: string, relatedPivotKey?: string, parentKey = 'id', relatedKey = 'id'): QueryBuilder<T, never> | QueryBuilder<any, never> {
+        if (typeof related === 'string') {
+            // Resolve model from morph map
+            const ModelClass = (Eloquent as any).getModelForMorphType(related);
+            if (!ModelClass) {
+                throw new Error(`Model '${related}' not found in morph map`);
+            }
+            const pivotTable = table || [this.constructor.name.toLowerCase(), ModelClass.name.toLowerCase()].sort().join('_');
+            const fpk = foreignPivotKey || `${this.constructor.name.toLowerCase()}_id`;
+            const rpk = relatedPivotKey || `${ModelClass.name.toLowerCase()}_id`;
+            const relatedTable = (ModelClass as any).table || ModelClass.name.toLowerCase() + 's';
+            const qb = ModelClass.query().join(pivotTable, `${relatedTable}.${relatedKey}`, '=', `${pivotTable}.${rpk}`).where(`${pivotTable}.${fpk}`, (this as any)[parentKey]);
 
-        // Add pivot configuration for withPivot support
-        (qb as any).pivotConfig = { table: pivotTable, alias: 'pivot', columns: new Set<string>() };
-        return qb as QueryBuilder<T, never>;
+            // Add pivot configuration for withPivot support
+            (qb as any).pivotConfig = { table: pivotTable, alias: 'pivot', columns: new Set<string>() };
+            return qb as QueryBuilder<any, never>;
+        } else {
+            const pivotTable = table || [this.constructor.name.toLowerCase(), related.name.toLowerCase()].sort().join('_');
+            const fpk = foreignPivotKey || `${this.constructor.name.toLowerCase()}_id`;
+            const rpk = relatedPivotKey || `${related.name.toLowerCase()}_id`;
+            const relatedTable = (related as any).table || related.name.toLowerCase() + 's';
+            const qb = related.query().join(pivotTable, `${relatedTable}.${relatedKey}`, '=', `${pivotTable}.${rpk}`).where(`${pivotTable}.${fpk}`, (this as any)[parentKey]);
+
+            // Add pivot configuration for withPivot support
+            (qb as any).pivotConfig = { table: pivotTable, alias: 'pivot', columns: new Set<string>() };
+            return qb as QueryBuilder<T, never>;
+        }
     }
 
     static getProperty(key: string) {
@@ -1843,14 +2000,18 @@ class Eloquent {
         return out;
     }
 
-    async load(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<this> {
+    async load<TExplicit = this>(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<TExplicit>;
+    async load<TExplicit>(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<TExplicit>;
+    async load<TExplicit = this>(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<TExplicit> {
         await (this.constructor as any).load([this], relations);
-        return this;
+        return this as any;
     }
 
-    async loadMissing(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<this> {
+    async loadMissing<TExplicit = this>(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<TExplicit>;
+    async loadMissing<TExplicit>(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<TExplicit>;
+    async loadMissing<TExplicit = this>(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<TExplicit> {
         await (this.constructor as any).loadMissing([this], relations);
-        return this;
+        return this as any;
     }
 
     async loadCount(relations: string | string[] | Record<string, (query: QueryBuilder) => void>): Promise<this> {
@@ -1859,6 +2020,14 @@ class Eloquent {
     }
 
     // Overloads for better typing (returns this augmented with loaded relation keys)
+    // Explicit typing overloads
+    loadForAll<TExplicit = this>(relations: string): Promise<TExplicit>;
+    loadForAll<TExplicit = this>(relations: readonly string[]): Promise<TExplicit>;
+    loadForAll<TExplicit = this>(relations: string[]): Promise<TExplicit>;
+    loadForAll<TExplicit = this>(relations: Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<TExplicit>;
+    loadForAll<TExplicit = this>(...relations: string[]): Promise<TExplicit>;
+
+    // Inferred typing overloads
     loadForAll<K extends readonly string[]>(this: this, ...relations: K): Promise<
         Omit<this, BaseRelationName<K[number]>> & { [P in BaseRelationName<K[number]> & keyof RelationsOf<this>]: RelationsOf<this>[P] }
     >;
