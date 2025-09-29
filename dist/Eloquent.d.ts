@@ -182,6 +182,13 @@ declare class Eloquent {
     static disableDebug(): void;
     static raw(value: string): string;
     private static getLoadBatch;
+    private static getLoadedRelationsRegistry;
+    private static markRelationsAsLoaded;
+    private static areRelationsLoaded;
+    private static getLoadingPromises;
+    private static getLoadingCacheKey;
+    private static getCollectionsRegistry;
+    private static generateCollectionId;
     private static addToLoadBatch;
     private static scheduleBatchFlush;
     private static flushLoadBatch;

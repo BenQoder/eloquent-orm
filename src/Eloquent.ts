@@ -1394,6 +1394,12 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         await this.loadRelations(instances, this.withRelations || []);
         const collection = new Collection<WithRelations<InstanceType<M>, TWith>>();
         collection.push(...instances);
+
+        // Generate a unique collection ID and register the collection
+        const collectionId = (this.model as any).generateCollectionId();
+        const collectionsRegistry = (this.model as any).getCollectionsRegistry();
+        collectionsRegistry.set(collectionId, instances);
+
         // Link instances back to the collection so autoloading can scope to the entire set
         for (const inst of instances) {
             try {
@@ -1403,6 +1409,8 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                     configurable: true,
                     writable: true
                 });
+                // Also store the collection ID as an enumerable property that survives serialization
+                (inst as any).__collectionId = collectionId;
             } catch {
                 // no-op if defineProperty fails
             }
@@ -1576,12 +1584,26 @@ interface LoadBatchItem {
     relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>;
 }
 
+// Global registry to track loaded relations by model and ID
+interface LoadedRelationsRegistry {
+    [modelName: string]: {
+        [instanceId: string | number]: {
+            [relationName: string]: boolean;
+        };
+    };
+}
+
 declare const globalThis: any;
 declare const process: any;
 
 // Static properties for batching
 const LOAD_BATCH_KEY = Symbol('loadBatch');
+const LOADED_RELATIONS_REGISTRY_KEY = Symbol('loadedRelationsRegistry');
 const BATCH_TIMER_KEY = Symbol('batchTimer');
+const LOADING_PROMISES_KEY = Symbol('loadingPromises');
+const COLLECTIONS_REGISTRY_KEY = Symbol('collectionsRegistry');
+
+let COLLECTION_ID_COUNTER = 0;
 
 class ThroughBuilder {
     constructor(private instance: Eloquent, private throughRelation: string) { }
@@ -1660,6 +1682,85 @@ class Eloquent {
             (Eloquent as any)[LOAD_BATCH_KEY] = [];
         }
         return (Eloquent as any)[LOAD_BATCH_KEY];
+    }
+
+    // Global registry for tracking loaded relations by model and ID
+    private static getLoadedRelationsRegistry(): LoadedRelationsRegistry {
+        if (typeof globalThis !== 'undefined') {
+            if (!globalThis[LOADED_RELATIONS_REGISTRY_KEY]) {
+                globalThis[LOADED_RELATIONS_REGISTRY_KEY] = {};
+            }
+            return globalThis[LOADED_RELATIONS_REGISTRY_KEY];
+        }
+
+        if (!(Eloquent as any)[LOADED_RELATIONS_REGISTRY_KEY]) {
+            (Eloquent as any)[LOADED_RELATIONS_REGISTRY_KEY] = {};
+        }
+        return (Eloquent as any)[LOADED_RELATIONS_REGISTRY_KEY];
+    }
+
+    private static markRelationsAsLoaded(modelName: string, instanceId: string | number, relationNames: string[]): void {
+        const registry = this.getLoadedRelationsRegistry();
+        if (!registry[modelName]) {
+            registry[modelName] = {};
+        }
+        if (!registry[modelName][instanceId]) {
+            registry[modelName][instanceId] = {};
+        }
+        relationNames.forEach(name => {
+            registry[modelName][instanceId][name] = true;
+        });
+    }
+
+    private static areRelationsLoaded(modelName: string, instanceId: string | number, relationNames: string[]): boolean {
+        const registry = this.getLoadedRelationsRegistry();
+        const modelRegistry = registry[modelName];
+        if (!modelRegistry || !modelRegistry[instanceId]) {
+            return false;
+        }
+        return relationNames.every(name => modelRegistry[instanceId][name] === true);
+    }
+
+    // Get the loading promises cache
+    private static getLoadingPromises(): Map<string, Promise<void>> {
+        if (typeof globalThis !== 'undefined') {
+            if (!globalThis[LOADING_PROMISES_KEY]) {
+                globalThis[LOADING_PROMISES_KEY] = new Map();
+            }
+            return globalThis[LOADING_PROMISES_KEY];
+        }
+
+        if (!(Eloquent as any)[LOADING_PROMISES_KEY]) {
+            (Eloquent as any)[LOADING_PROMISES_KEY] = new Map();
+        }
+        return (Eloquent as any)[LOADING_PROMISES_KEY];
+    }
+
+    // Generate a cache key for a loading operation
+    private static getLoadingCacheKey(modelName: string, instanceIds: (string | number)[], relationNames: string[]): string {
+        const sortedIds = [...instanceIds].sort();
+        const sortedRelations = [...relationNames].sort();
+        return `${modelName}:${sortedIds.join(',')}:${sortedRelations.join(',')}`;
+    }
+
+    // Get the collections registry
+    private static getCollectionsRegistry(): Map<string, Eloquent[]> {
+        if (typeof globalThis !== 'undefined') {
+            if (!globalThis[COLLECTIONS_REGISTRY_KEY]) {
+                globalThis[COLLECTIONS_REGISTRY_KEY] = new Map();
+            }
+            return globalThis[COLLECTIONS_REGISTRY_KEY];
+        }
+
+        if (!(Eloquent as any)[COLLECTIONS_REGISTRY_KEY]) {
+            (Eloquent as any)[COLLECTIONS_REGISTRY_KEY] = new Map();
+        }
+        return (Eloquent as any)[COLLECTIONS_REGISTRY_KEY];
+    }
+
+    // Generate a unique collection ID
+    private static generateCollectionId(): string {
+        return `collection_${++COLLECTION_ID_COUNTER}_${Date.now()}`;
     }
 
     private static addToLoadBatch(instances: Eloquent[], relations: any): void {
@@ -2198,15 +2299,76 @@ class Eloquent {
         const relations: any = args.length > 1 ? args : args[0];
 
         const collection: any[] | undefined = (this as any).__collection;
-        const targets = Array.isArray(collection) && collection.length ? collection : [this];
+        const collectionId: string | undefined = (this as any).__collectionId;
+        const modelName = this.constructor.name;
+        const instanceId = (this as any).id;
 
         // Parse relation names to check if already loaded
         const relationNames = (this.constructor as typeof Eloquent).parseRelationNames(relations);
-        const firstTarget = targets[0];
-        const alreadyLoaded = relationNames.every(name => {
-            const rel = (firstTarget as any).__relations || {};
-            return name in rel;
-        });
+
+        // Check if already loaded via collection OR global registry
+        let alreadyLoaded = false;
+        let targets: Eloquent[] = [this];
+
+        // Try to get the collection from the registry using the collection ID
+        if (collectionId) {
+            const collectionsRegistry = (Eloquent as any).getCollectionsRegistry();
+            const registeredCollection = collectionsRegistry.get(collectionId);
+            if (registeredCollection && registeredCollection.length > 0) {
+                targets = registeredCollection;
+            }
+        } else if (collection && collection.length) {
+            // Fallback to __collection property if available
+            targets = collection;
+        }
+
+        // Check if relations are already loaded on the first target
+        if (targets.length > 1) {
+            const firstTarget = targets[0];
+            alreadyLoaded = relationNames.every(name => {
+                const rel = (firstTarget as any).__relations || {};
+                return name in rel;
+            });
+
+            // Also populate registry for future serialized instances
+            if (alreadyLoaded && instanceId !== undefined) {
+                targets.forEach((target: any) => {
+                    const targetId = target.id;
+                    if (targetId !== undefined) {
+                        (Eloquent as any).markRelationsAsLoaded(modelName, targetId, relationNames);
+                    }
+                });
+            }
+        } else {
+            // Use global registry for caching when we only have this instance
+            alreadyLoaded = (instanceId !== undefined) && (Eloquent as any).areRelationsLoaded(modelName, instanceId, relationNames);
+        }
+
+        // If not loaded via registry, check if any other instances of same model+id have the relations
+        if (!alreadyLoaded && instanceId !== undefined) {
+            const registry = (Eloquent as any).getLoadedRelationsRegistry();
+            const modelRegistry = registry[modelName];
+            if (modelRegistry && modelRegistry[instanceId]) {
+                // Mark relations as loaded on this instance if they're loaded for this ID
+                const loadedFromRegistry = relationNames.every(name => modelRegistry[instanceId][name] === true);
+                if (loadedFromRegistry) {
+                    alreadyLoaded = true;
+                    // Mark relations as loaded on this instance
+                    const holder = (this as any).__relations || {};
+                    if (!(this as any).__relations) {
+                        Object.defineProperty(this as any, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                    }
+                    relationNames.forEach(name => {
+                        holder[name] = true;
+                    });
+
+                    // Debug logging for registry hits
+                    if ((Eloquent as any).debugEnabled) {
+                        (Eloquent as any).debugLogger(`loadForAll: Using registry cached data for relations [${relationNames.join(', ')}] on ${this.constructor.name}#${instanceId}`);
+                    }
+                }
+            }
+        }
 
         // Debug logging for loadForAll behavior
         if ((Eloquent as any).debugEnabled) {
@@ -2219,9 +2381,56 @@ class Eloquent {
             }
         }
 
-        // If not already loaded, load immediately for all targets
+        // If not already loaded, coordinate loading across all instances
         if (!alreadyLoaded) {
-            await (this.constructor as typeof Eloquent).load(targets, relations);
+            const targetIds = targets.map((t: any) => t.id).filter(id => id !== undefined);
+
+            // Use collection ID for the cache key if available, otherwise use instance ID
+            const cacheKey = collectionId
+                ? `${collectionId}:${relationNames.sort().join(',')}`
+                : instanceId !== undefined
+                    ? (Eloquent as any).getLoadingCacheKey(modelName, [instanceId], relationNames)
+                    : null;
+
+            const loadingPromises = (Eloquent as any).getLoadingPromises();
+
+            // Check if there's already a load in progress for this collection/instance
+            if (cacheKey && loadingPromises.has(cacheKey)) {
+                // Another call is already loading - wait for it
+                if ((Eloquent as any).debugEnabled) {
+                    (Eloquent as any).debugLogger(`loadForAll: Waiting for concurrent load operation for relations [${relationNames.join(', ')}] on ${this.constructor.name}#${instanceId}`);
+                }
+                await loadingPromises.get(cacheKey);
+            } else if (cacheKey) {
+                // We're the first - create the promise and store it
+                const loadPromise = (async () => {
+                    try {
+                        if ((Eloquent as any).debugEnabled) {
+                            (Eloquent as any).debugLogger(`loadForAll: Starting DB load for relations [${relationNames.join(', ')}] on ${this.constructor.name} (${targetIds.length} instances)`);
+                        }
+
+                        await (this.constructor as typeof Eloquent).load(targets, relations);
+
+                        // Mark relations as loaded in the global registry for all targets
+                        targets.forEach((target: any) => {
+                            const targetId = target.id;
+                            if (targetId !== undefined) {
+                                (Eloquent as any).markRelationsAsLoaded(modelName, targetId, relationNames);
+                            }
+                        });
+                    } finally {
+                        // Remove the promise from the cache once complete
+                        loadingPromises.delete(cacheKey);
+                    }
+                })();
+
+                // Store the promise immediately (before any await)
+                loadingPromises.set(cacheKey, loadPromise);
+                await loadPromise;
+            } else {
+                // No cache key, just load directly
+                await (this.constructor as typeof Eloquent).load(targets, relations);
+            }
         }
 
         // Return the instance with loaded relations available
