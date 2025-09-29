@@ -1619,6 +1619,9 @@ class Eloquent {
     // Global collection registry for handling JSX/serialization scenarios
     private static globalCollectionRegistry: Map<string, { instances: Eloquent[], timestamp: number }> = new Map();
 
+    // Global relation state tracker per model instance ID
+    private static globalRelationState: Map<string, Set<string>> = new Map();
+
     // Debug logging
     public static debugEnabled = false;
     public static debugLogger: (message: string, data?: any) => void = (message, data) => {
@@ -1828,6 +1831,58 @@ class Eloquent {
         }
 
         return null;
+    }
+
+    // Copy relations from the global registry to target instances
+    static async copyRelationsFromRegistry(instances: Eloquent[], relations: any): Promise<void> {
+        if (instances.length === 0) return;
+
+        const modelName = instances[0].constructor.name;
+        const relationNames = this.parseRelationNames(relations);
+
+        // Find a collection in the registry that has these instances with loaded relations
+        for (const [key, entry] of this.globalCollectionRegistry.entries()) {
+            if (key.startsWith(`${modelName}:`)) {
+                // Check if any instance in this registry entry has the needed relations loaded
+                const sourceWithRelations = entry.instances.find(source => {
+                    return relationNames.every(name => {
+                        const rel = (source as any).__relations || {};
+                        return name in rel && (source as any)[name] !== undefined;
+                    });
+                });
+
+                if (sourceWithRelations) {
+                    // Copy relations from registry instances to target instances
+                    for (const target of instances) {
+                        const targetId = (target as any).id;
+                        const sourceInstance = entry.instances.find(inst => (inst as any).id === targetId);
+
+                        if (sourceInstance) {
+                            for (const name of relationNames) {
+                                if ((sourceInstance as any)[name] !== undefined) {
+                                    (target as any)[name] = (sourceInstance as any)[name];
+
+                                    // Mark relation as loaded on target
+                                    try {
+                                        const holder = (target as any).__relations || {};
+                                        if (!(target as any).__relations) {
+                                            Object.defineProperty(target as any, '__relations', {
+                                                value: holder,
+                                                enumerable: false,
+                                                configurable: true,
+                                                writable: true
+                                            });
+                                        }
+                                        holder[name] = true;
+                                    } catch { /* no-op */ }
+                                }
+                            }
+                        }
+                    }
+                    return; // Found and copied, exit
+                }
+            }
+        }
     }
 
     static async init(connection: any, morphs?: Record<string, typeof Eloquent>) {
@@ -2264,11 +2319,21 @@ class Eloquent {
 
         // Parse relation names to check if already loaded
         const relationNames = (this.constructor as typeof Eloquent).parseRelationNames(relations);
-        const firstTarget = targets[0];
-        const alreadyLoaded = relationNames.every(name => {
-            const rel = (firstTarget as any).__relations || {};
-            return name in rel;
+
+        // Check if relations are already loaded globally for this model/relation combination
+        const modelName = this.constructor.name;
+        const globalStateKey = `${modelName}:${relationNames.join(',')}`;
+        const globallyLoaded = (Eloquent as any).globalRelationState.has(globalStateKey);
+
+        // Also check local state as fallback
+        const locallyLoaded = relationNames.every(name => {
+            return targets.some(target => {
+                const rel = (target as any).__relations || {};
+                return name in rel && (target as any)[name] !== undefined;
+            });
         });
+
+        const alreadyLoaded = globallyLoaded || locallyLoaded;
 
         // Debug logging for loadForAll behavior
         if ((Eloquent as any).debugEnabled) {
@@ -2286,6 +2351,20 @@ class Eloquent {
         // If not already loaded, load immediately for all targets
         if (!alreadyLoaded) {
             await (this.constructor as typeof Eloquent).load(targets, relations);
+
+            // Mark as globally loaded
+            (Eloquent as any).globalRelationState.set(globalStateKey, new Set(relationNames));
+
+            if ((Eloquent as any).debugEnabled) {
+                (Eloquent as any).debugLogger(`Marked relations as globally loaded: ${globalStateKey}`);
+            }
+        } else if (globallyLoaded && !locallyLoaded) {
+            // Relations are globally loaded but not on these instances - copy from registry
+            await (this.constructor as typeof Eloquent).copyRelationsFromRegistry(targets, relations);
+
+            if ((Eloquent as any).debugEnabled) {
+                (Eloquent as any).debugLogger(`Copied relations from global registry: ${globalStateKey}`);
+            }
         }
 
         // Return the instance with loaded relations available

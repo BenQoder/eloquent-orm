@@ -175,6 +175,7 @@ declare class Eloquent {
     private static morphMap;
     static automaticallyEagerLoadRelationshipsEnabled: boolean;
     private static globalCollectionRegistry;
+    private static globalRelationState;
     static debugEnabled: boolean;
     static debugLogger: (message: string, data?: any) => void;
     static automaticallyEagerLoadRelationships(): void;
@@ -190,6 +191,7 @@ declare class Eloquent {
     static clearLoadForAllBatch(): void;
     static registerCollection(instances: Eloquent[]): string;
     static findCollectionForInstance(instance: Eloquent): Eloquent[] | null;
+    static copyRelationsFromRegistry(instances: Eloquent[], relations: any): Promise<void>;
     static init(connection: any, morphs?: Record<string, typeof Eloquent>): Promise<void>;
     static useConnection(connection: any, morphs?: Record<string, typeof Eloquent>): void;
     static getRelationConfig(model: typeof Eloquent, relationName: string): any | null;
