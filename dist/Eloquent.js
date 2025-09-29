@@ -1641,6 +1641,49 @@ class Eloquent {
             Eloquent[BATCH_TIMER_KEY] = false;
         }
     }
+    // Register a collection in the global registry
+    static registerCollection(instances) {
+        if (instances.length === 0)
+            return '';
+        const modelName = instances[0].constructor.name;
+        const ids = instances.map(inst => inst.id).filter(id => id != null).sort().join(',');
+        const key = `${modelName}:${ids}`;
+        this.globalCollectionRegistry.set(key, {
+            instances,
+            timestamp: Date.now()
+        });
+        // Clean up old entries (older than 5 minutes)
+        const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
+        for (const [regKey, entry] of this.globalCollectionRegistry.entries()) {
+            if (entry.timestamp < fiveMinutesAgo) {
+                this.globalCollectionRegistry.delete(regKey);
+            }
+        }
+        if (this.debugEnabled) {
+            this.debugLogger(`Registered collection: ${key} (${instances.length} instances)`);
+        }
+        return key;
+    }
+    // Find collection for an instance in the global registry
+    static findCollectionForInstance(instance) {
+        const modelName = instance.constructor.name;
+        const instanceId = instance.id;
+        if (!instanceId)
+            return null;
+        // Look for a collection that contains this instance
+        for (const [key, entry] of this.globalCollectionRegistry.entries()) {
+            if (key.startsWith(`${modelName}:`)) {
+                const foundInstance = entry.instances.find(inst => inst.id === instanceId);
+                if (foundInstance) {
+                    if (this.debugEnabled) {
+                        this.debugLogger(`Found collection for ${modelName}#${instanceId}: ${key} (${entry.instances.length} instances)`);
+                    }
+                    return entry.instances;
+                }
+            }
+        }
+        return null;
+    }
     static async init(connection, morphs) {
         // Require an already-created connection
         Eloquent.connection = connection;
@@ -1985,7 +2028,13 @@ class Eloquent {
     async loadForAll(...args) {
         // Normalize arguments
         const relations = args.length > 1 ? args : args[0];
-        const collection = this.__collection;
+        // Try to get collection from instance, fallback to global registry
+        let collection = this.__collection;
+        let collectionSource = 'instance';
+        if (!collection || !Array.isArray(collection) || collection.length === 0) {
+            collection = Eloquent.findCollectionForInstance(this);
+            collectionSource = 'global-registry';
+        }
         const targets = Array.isArray(collection) && collection.length ? collection : [this];
         // Parse relation names to check if already loaded
         const relationNames = this.constructor.parseRelationNames(relations);
@@ -1998,11 +2047,12 @@ class Eloquent {
         if (Eloquent.debugEnabled) {
             const targetCount = targets.length;
             const instanceId = this.id || 'unknown';
+            const collectionInfo = targets.length > 1 ? `${targetCount} instances via ${collectionSource}` : 'single instance';
             if (alreadyLoaded) {
-                Eloquent.debugLogger(`loadForAll: Using cached data for relations [${relationNames.join(', ')}] on ${this.constructor.name}#${instanceId} (${targetCount} instances in collection)`);
+                Eloquent.debugLogger(`loadForAll: Using cached data for relations [${relationNames.join(', ')}] on ${this.constructor.name}#${instanceId} (${collectionInfo})`);
             }
             else {
-                Eloquent.debugLogger(`loadForAll: Making fresh DB call for relations [${relationNames.join(', ')}] on ${this.constructor.name}#${instanceId} (loading for ${targetCount} instances)`);
+                Eloquent.debugLogger(`loadForAll: Making fresh DB call for relations [${relationNames.join(', ')}] on ${this.constructor.name}#${instanceId} (loading for ${collectionInfo})`);
             }
         }
         // If not already loaded, load immediately for all targets
@@ -2111,6 +2161,8 @@ Eloquent.with = [];
 Eloquent.connection = null;
 Eloquent.morphMap = {};
 Eloquent.automaticallyEagerLoadRelationshipsEnabled = false;
+// Global collection registry for handling JSX/serialization scenarios
+Eloquent.globalCollectionRegistry = new Map();
 // Debug logging
 Eloquent.debugEnabled = false;
 Eloquent.debugLogger = (message, data) => {

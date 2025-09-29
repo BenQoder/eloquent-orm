@@ -1616,6 +1616,9 @@ class Eloquent {
     private static morphMap: Record<string, typeof Eloquent> = {};
     public static automaticallyEagerLoadRelationshipsEnabled: boolean = false;
 
+    // Global collection registry for handling JSX/serialization scenarios
+    private static globalCollectionRegistry: Map<string, { instances: Eloquent[], timestamp: number }> = new Map();
+
     // Debug logging
     public static debugEnabled = false;
     public static debugLogger: (message: string, data?: any) => void = (message, data) => {
@@ -1774,6 +1777,57 @@ class Eloquent {
         } else {
             (Eloquent as any)[BATCH_TIMER_KEY] = false;
         }
+    }
+
+    // Register a collection in the global registry
+    static registerCollection(instances: Eloquent[]): string {
+        if (instances.length === 0) return '';
+
+        const modelName = instances[0].constructor.name;
+        const ids = instances.map(inst => (inst as any).id).filter(id => id != null).sort().join(',');
+        const key = `${modelName}:${ids}`;
+
+        this.globalCollectionRegistry.set(key, {
+            instances,
+            timestamp: Date.now()
+        });
+
+        // Clean up old entries (older than 5 minutes)
+        const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
+        for (const [regKey, entry] of this.globalCollectionRegistry.entries()) {
+            if (entry.timestamp < fiveMinutesAgo) {
+                this.globalCollectionRegistry.delete(regKey);
+            }
+        }
+
+        if (this.debugEnabled) {
+            this.debugLogger(`Registered collection: ${key} (${instances.length} instances)`);
+        }
+
+        return key;
+    }
+
+    // Find collection for an instance in the global registry
+    static findCollectionForInstance(instance: Eloquent): Eloquent[] | null {
+        const modelName = instance.constructor.name;
+        const instanceId = (instance as any).id;
+
+        if (!instanceId) return null;
+
+        // Look for a collection that contains this instance
+        for (const [key, entry] of this.globalCollectionRegistry.entries()) {
+            if (key.startsWith(`${modelName}:`)) {
+                const foundInstance = entry.instances.find(inst => (inst as any).id === instanceId);
+                if (foundInstance) {
+                    if (this.debugEnabled) {
+                        this.debugLogger(`Found collection for ${modelName}#${instanceId}: ${key} (${entry.instances.length} instances)`);
+                    }
+                    return entry.instances;
+                }
+            }
+        }
+
+        return null;
     }
 
     static async init(connection: any, morphs?: Record<string, typeof Eloquent>) {
@@ -2197,7 +2251,15 @@ class Eloquent {
         // Normalize arguments
         const relations: any = args.length > 1 ? args : args[0];
 
-        const collection: any[] | undefined = (this as any).__collection;
+        // Try to get collection from instance, fallback to global registry
+        let collection: any[] | undefined = (this as any).__collection;
+        let collectionSource = 'instance';
+
+        if (!collection || !Array.isArray(collection) || collection.length === 0) {
+            collection = (Eloquent as any).findCollectionForInstance(this);
+            collectionSource = 'global-registry';
+        }
+
         const targets = Array.isArray(collection) && collection.length ? collection : [this];
 
         // Parse relation names to check if already loaded
@@ -2212,10 +2274,12 @@ class Eloquent {
         if ((Eloquent as any).debugEnabled) {
             const targetCount = targets.length;
             const instanceId = (this as any).id || 'unknown';
+            const collectionInfo = targets.length > 1 ? `${targetCount} instances via ${collectionSource}` : 'single instance';
+
             if (alreadyLoaded) {
-                (Eloquent as any).debugLogger(`loadForAll: Using cached data for relations [${relationNames.join(', ')}] on ${this.constructor.name}#${instanceId} (${targetCount} instances in collection)`);
+                (Eloquent as any).debugLogger(`loadForAll: Using cached data for relations [${relationNames.join(', ')}] on ${this.constructor.name}#${instanceId} (${collectionInfo})`);
             } else {
-                (Eloquent as any).debugLogger(`loadForAll: Making fresh DB call for relations [${relationNames.join(', ')}] on ${this.constructor.name}#${instanceId} (loading for ${targetCount} instances)`);
+                (Eloquent as any).debugLogger(`loadForAll: Making fresh DB call for relations [${relationNames.join(', ')}] on ${this.constructor.name}#${instanceId} (loading for ${collectionInfo})`);
             }
         }
 
