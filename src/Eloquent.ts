@@ -1622,6 +1622,9 @@ class Eloquent {
     // Global relation state tracker per model instance ID
     private static globalRelationState: Map<string, Set<string>> = new Map();
 
+    // Global relation data cache - stores actual relation data by instance ID and relation name
+    private static globalRelationDataCache: Map<string, any> = new Map();
+
     // Debug logging
     public static debugEnabled = false;
     public static debugLogger: (message: string, data?: any) => void = (message, data) => {
@@ -2323,7 +2326,12 @@ class Eloquent {
         // Check if relations are already loaded globally for this model/relation combination
         const modelName = this.constructor.name;
         const globalStateKey = `${modelName}:${relationNames.join(',')}`;
-        const globallyLoaded = (Eloquent as any).globalRelationState.has(globalStateKey);
+
+        // Also check if this specific instance ID has been processed
+        const instanceId = (this as any).id;
+        const instanceStateKey = `${modelName}:${instanceId}:${relationNames.join(',')}`;
+        const globallyLoaded = (Eloquent as any).globalRelationState.has(globalStateKey) ||
+            (Eloquent as any).globalRelationState.has(instanceStateKey);
 
         // Also check local state as fallback
         const locallyLoaded = relationNames.every(name => {
@@ -2355,15 +2363,45 @@ class Eloquent {
             // Mark as globally loaded
             (Eloquent as any).globalRelationState.set(globalStateKey, new Set(relationNames));
 
-            if ((Eloquent as any).debugEnabled) {
-                (Eloquent as any).debugLogger(`Marked relations as globally loaded: ${globalStateKey}`);
+            // Also mark each individual instance as processed
+            for (const target of targets) {
+                const targetId = (target as any).id;
+                if (targetId) {
+                    const targetStateKey = `${modelName}:${targetId}:${relationNames.join(',')}`;
+                    (Eloquent as any).globalRelationState.set(targetStateKey, new Set(relationNames));
+                }
             }
-        } else if (globallyLoaded && !locallyLoaded) {
-            // Relations are globally loaded but not on these instances - copy from registry
-            await (this.constructor as typeof Eloquent).copyRelationsFromRegistry(targets, relations);
 
             if ((Eloquent as any).debugEnabled) {
-                (Eloquent as any).debugLogger(`Copied relations from global registry: ${globalStateKey}`);
+                (Eloquent as any).debugLogger(`Marked relations as globally loaded: ${globalStateKey} (${targets.length} instances)`);
+            }
+        } else if (globallyLoaded && !locallyLoaded) {
+            // Relations are globally loaded - populate from cache
+            for (const relationName of relationNames) {
+                const cacheKey = `${modelName}:${instanceId}:${relationName}`;
+                const cachedData = (Eloquent as any).globalRelationDataCache.get(cacheKey);
+
+                if (cachedData !== undefined) {
+                    (this as any)[relationName] = cachedData;
+
+                    // Mark relation as loaded on this instance
+                    try {
+                        const holder = (this as any).__relations || {};
+                        if (!(this as any).__relations) {
+                            Object.defineProperty(this as any, '__relations', {
+                                value: holder,
+                                enumerable: false,
+                                configurable: true,
+                                writable: true
+                            });
+                        }
+                        holder[relationName] = true;
+                    } catch { /* no-op */ }
+                }
+            }
+
+            if ((Eloquent as any).debugEnabled) {
+                (Eloquent as any).debugLogger(`Populated relations from cache for isolated instance: ${modelName}#${instanceId}`);
             }
         }
 
@@ -2401,6 +2439,13 @@ class Eloquent {
             for (const name of names) {
                 if ((loaded as any)[name] !== undefined) {
                     (instance as any)[name] = (loaded as any)[name];
+
+                    // Cache the relation data globally
+                    const modelName = instance.constructor.name;
+                    const instanceId = (instance as any).id;
+                    const cacheKey = `${modelName}:${instanceId}:${name}`;
+                    (Eloquent as any).globalRelationDataCache.set(cacheKey, (loaded as any)[name]);
+
                     try {
                         const holder = (instance as any).__relations || {};
                         if (!(instance as any).__relations) {

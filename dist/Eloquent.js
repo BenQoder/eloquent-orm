@@ -2089,7 +2089,11 @@ class Eloquent {
         // Check if relations are already loaded globally for this model/relation combination
         const modelName = this.constructor.name;
         const globalStateKey = `${modelName}:${relationNames.join(',')}`;
-        const globallyLoaded = Eloquent.globalRelationState.has(globalStateKey);
+        // Also check if this specific instance ID has been processed
+        const instanceId = this.id;
+        const instanceStateKey = `${modelName}:${instanceId}:${relationNames.join(',')}`;
+        const globallyLoaded = Eloquent.globalRelationState.has(globalStateKey) ||
+            Eloquent.globalRelationState.has(instanceStateKey);
         // Also check local state as fallback
         const locallyLoaded = relationNames.every(name => {
             return targets.some(target => {
@@ -2115,15 +2119,43 @@ class Eloquent {
             await this.constructor.load(targets, relations);
             // Mark as globally loaded
             Eloquent.globalRelationState.set(globalStateKey, new Set(relationNames));
+            // Also mark each individual instance as processed
+            for (const target of targets) {
+                const targetId = target.id;
+                if (targetId) {
+                    const targetStateKey = `${modelName}:${targetId}:${relationNames.join(',')}`;
+                    Eloquent.globalRelationState.set(targetStateKey, new Set(relationNames));
+                }
+            }
             if (Eloquent.debugEnabled) {
-                Eloquent.debugLogger(`Marked relations as globally loaded: ${globalStateKey}`);
+                Eloquent.debugLogger(`Marked relations as globally loaded: ${globalStateKey} (${targets.length} instances)`);
             }
         }
         else if (globallyLoaded && !locallyLoaded) {
-            // Relations are globally loaded but not on these instances - copy from registry
-            await this.constructor.copyRelationsFromRegistry(targets, relations);
+            // Relations are globally loaded - populate from cache
+            for (const relationName of relationNames) {
+                const cacheKey = `${modelName}:${instanceId}:${relationName}`;
+                const cachedData = Eloquent.globalRelationDataCache.get(cacheKey);
+                if (cachedData !== undefined) {
+                    this[relationName] = cachedData;
+                    // Mark relation as loaded on this instance
+                    try {
+                        const holder = this.__relations || {};
+                        if (!this.__relations) {
+                            Object.defineProperty(this, '__relations', {
+                                value: holder,
+                                enumerable: false,
+                                configurable: true,
+                                writable: true
+                            });
+                        }
+                        holder[relationName] = true;
+                    }
+                    catch { /* no-op */ }
+                }
+            }
             if (Eloquent.debugEnabled) {
-                Eloquent.debugLogger(`Copied relations from global registry: ${globalStateKey}`);
+                Eloquent.debugLogger(`Populated relations from cache for isolated instance: ${modelName}#${instanceId}`);
             }
         }
         // Return the instance with loaded relations available
@@ -2154,6 +2186,11 @@ class Eloquent {
             for (const name of names) {
                 if (loaded[name] !== undefined) {
                     instance[name] = loaded[name];
+                    // Cache the relation data globally
+                    const modelName = instance.constructor.name;
+                    const instanceId = instance.id;
+                    const cacheKey = `${modelName}:${instanceId}:${name}`;
+                    Eloquent.globalRelationDataCache.set(cacheKey, loaded[name]);
                     try {
                         const holder = instance.__relations || {};
                         if (!instance.__relations) {
@@ -2232,6 +2269,8 @@ Eloquent.automaticallyEagerLoadRelationshipsEnabled = false;
 Eloquent.globalCollectionRegistry = new Map();
 // Global relation state tracker per model instance ID
 Eloquent.globalRelationState = new Map();
+// Global relation data cache - stores actual relation data by instance ID and relation name
+Eloquent.globalRelationDataCache = new Map();
 // Debug logging
 Eloquent.debugEnabled = false;
 Eloquent.debugLogger = (message, data) => {

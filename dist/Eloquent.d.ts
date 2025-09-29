@@ -176,6 +176,7 @@ declare class Eloquent {
     static automaticallyEagerLoadRelationshipsEnabled: boolean;
     private static globalCollectionRegistry;
     private static globalRelationState;
+    private static globalRelationDataCache;
     static debugEnabled: boolean;
     static debugLogger: (message: string, data?: any) => void;
     static automaticallyEagerLoadRelationships(): void;
