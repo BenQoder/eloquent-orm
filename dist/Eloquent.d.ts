@@ -19,7 +19,7 @@ type RelationsOf<T> = T extends {
     relationsTypes: infer RT;
 } ? RT : {};
 type RelationData<M, K extends string> = {
-    [P in K]: P extends keyof RelationsOf<M> ? RelationsOf<M>[P] : any;
+    [P in K]-?: P extends keyof RelationsOf<M> ? NonNullable<RelationsOf<M>[P]> : any;
 };
 type WithRelations<M, K extends string> = M & RelationData<M, K>;
 type StripColumns<S extends string> = S extends `${infer R}:${string}` ? R : S;
@@ -240,20 +240,20 @@ declare class Eloquent {
     loadForAll<TExplicit = this>(relations: string[]): Promise<TExplicit>;
     loadForAll<TExplicit = this>(relations: Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<TExplicit>;
     loadForAll<TExplicit = this>(...relations: string[]): Promise<TExplicit>;
-    loadForAll<K extends readonly string[]>(this: this, ...relations: K): Promise<Omit<this, BaseRelationName<K[number]>> & {
-        [P in BaseRelationName<K[number]> & keyof RelationsOf<this>]: RelationsOf<this>[P];
+    loadForAll<K extends readonly string[]>(this: this, ...relations: K): Promise<this & {
+        [P in BaseRelationName<K[number]> & keyof RelationsOf<this>]-?: NonNullable<RelationsOf<this>[P]>;
     }>;
-    loadForAll<K extends string>(this: this, relations: K): Promise<Omit<this, BaseRelationName<K>> & (BaseRelationName<K> extends keyof RelationsOf<this> ? {
-        [P in BaseRelationName<K>]: RelationsOf<this>[P];
+    loadForAll<K extends string>(this: this, relations: K): Promise<this & (BaseRelationName<K> extends keyof RelationsOf<this> ? {
+        [P in BaseRelationName<K>]-?: NonNullable<RelationsOf<this>[P]>;
     } : {})>;
-    loadForAll<K extends readonly string[]>(this: this, relations: K): Promise<Omit<this, BaseRelationName<K[number]>> & {
-        [P in BaseRelationName<K[number]> & keyof RelationsOf<this>]: RelationsOf<this>[P];
+    loadForAll<K extends readonly string[]>(this: this, relations: K): Promise<this & {
+        [P in BaseRelationName<K[number]> & keyof RelationsOf<this>]-?: NonNullable<RelationsOf<this>[P]>;
     }>;
-    loadForAll<K extends string[]>(this: this, relations: K): Promise<Omit<this, BaseRelationName<K[number]>> & {
-        [P in BaseRelationName<K[number]> & keyof RelationsOf<this>]: RelationsOf<this>[P];
+    loadForAll<K extends string[]>(this: this, relations: K): Promise<this & {
+        [P in BaseRelationName<K[number]> & keyof RelationsOf<this>]-?: NonNullable<RelationsOf<this>[P]>;
     }>;
-    loadForAll<R extends Record<string, string[] | ((query: QueryBuilder<any>) => void)>>(this: this, relations: R): Promise<Omit<this, BaseRelationName<keyof R & string>> & {
-        [P in BaseRelationName<keyof R & string> & keyof RelationsOf<this>]: RelationsOf<this>[P];
+    loadForAll<R extends Record<string, string[] | ((query: QueryBuilder<any>) => void)>>(this: this, relations: R): Promise<this & {
+        [P in BaseRelationName<keyof R & string> & keyof RelationsOf<this>]-?: NonNullable<RelationsOf<this>[P]>;
     }>;
     static load(instances: Eloquent[], relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<void>;
     static loadMissing(instances: Eloquent[], relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<void>;

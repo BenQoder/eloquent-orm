@@ -36,10 +36,10 @@ type ModelSchemaType<M> = M extends { schema: infer S }
     : never;
 // Final result type merges model instance with schema (fields) and declared relation properties
 type ResultType<M> = ModelInstance<M> & SchemaOf<ModelInstance<M>> & Partial<RelationsOf<ModelInstance<M>>>;
-// Helper to extract only the relation data we want to add
+// Helper to extract only the relation data we want to add (makes them required)
 type RelationData<M, K extends string> = {
-    [P in K]: P extends keyof RelationsOf<M>
-    ? RelationsOf<M>[P]
+    [P in K]-?: P extends keyof RelationsOf<M>
+    ? NonNullable<RelationsOf<M>[P]>
     : any;
 };
 
@@ -1393,7 +1393,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         });
         await this.loadRelations(instances, this.withRelations || []);
         const collection = new Collection<WithRelations<InstanceType<M>, TWith>>();
-        collection.push(...instances);
+        collection.push(...(instances as WithRelations<InstanceType<M>, TWith>[]));
 
         // Generate a unique collection ID and register the collection
         const collectionId = (this.model as any).generateCollectionId();
@@ -2276,23 +2276,23 @@ class Eloquent {
 
     // Inferred typing overloads
     loadForAll<K extends readonly string[]>(this: this, ...relations: K): Promise<
-        Omit<this, BaseRelationName<K[number]>> & { [P in BaseRelationName<K[number]> & keyof RelationsOf<this>]: RelationsOf<this>[P] }
+        this & { [P in BaseRelationName<K[number]> & keyof RelationsOf<this>]-?: NonNullable<RelationsOf<this>[P]> }
     >;
     loadForAll<K extends string>(this: this, relations: K): Promise<
-        Omit<this, BaseRelationName<K>> & (
+        this & (
             BaseRelationName<K> extends keyof RelationsOf<this>
-            ? { [P in BaseRelationName<K>]: RelationsOf<this>[P] }
+            ? { [P in BaseRelationName<K>]-?: NonNullable<RelationsOf<this>[P]> }
             : {}
         )
     >;
     loadForAll<K extends readonly string[]>(this: this, relations: K): Promise<
-        Omit<this, BaseRelationName<K[number]>> & { [P in BaseRelationName<K[number]> & keyof RelationsOf<this>]: RelationsOf<this>[P] }
+        this & { [P in BaseRelationName<K[number]> & keyof RelationsOf<this>]-?: NonNullable<RelationsOf<this>[P]> }
     >;
     loadForAll<K extends string[]>(this: this, relations: K): Promise<
-        Omit<this, BaseRelationName<K[number]>> & { [P in BaseRelationName<K[number]> & keyof RelationsOf<this>]: RelationsOf<this>[P] }
+        this & { [P in BaseRelationName<K[number]> & keyof RelationsOf<this>]-?: NonNullable<RelationsOf<this>[P]> }
     >;
     loadForAll<R extends Record<string, string[] | ((query: QueryBuilder<any>) => void)>>(this: this, relations: R): Promise<
-        Omit<this, BaseRelationName<keyof R & string>> & { [P in BaseRelationName<keyof R & string> & keyof RelationsOf<this>]: RelationsOf<this>[P] }
+        this & { [P in BaseRelationName<keyof R & string> & keyof RelationsOf<this>]-?: NonNullable<RelationsOf<this>[P]> }
     >;
     async loadForAll<R extends string | readonly string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>>(this: this, ...args: any[]): Promise<any> {
         // Normalize arguments
