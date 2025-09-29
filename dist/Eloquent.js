@@ -1684,6 +1684,87 @@ class Eloquent {
         }
         return null;
     }
+    // Static loadForAll method - finds collection and loads relations for all instances
+    static async loadForAll(instance, relations) {
+        // Find the collection this instance belongs to
+        const collection = this.findCollectionForInstance(instance);
+        const targets = collection && collection.length ? collection : [instance];
+        // Parse relation names to check if already loaded
+        const relationNames = this.parseRelationNames(relations);
+        // Check if relations are already loaded globally for this model/relation combination
+        const modelName = instance.constructor.name;
+        const globalStateKey = `${modelName}:${relationNames.join(',')}`;
+        // Also check if this specific instance ID has been processed
+        const instanceId = instance.id;
+        const instanceStateKey = `${modelName}:${instanceId}:${relationNames.join(',')}`;
+        const globallyLoaded = this.globalRelationState.has(globalStateKey) ||
+            this.globalRelationState.has(instanceStateKey);
+        // Also check local state as fallback
+        const locallyLoaded = relationNames.every(name => {
+            return targets.some(target => {
+                const rel = target.__relations || {};
+                return name in rel && target[name] !== undefined;
+            });
+        });
+        const alreadyLoaded = globallyLoaded || locallyLoaded;
+        // Debug logging
+        if (this.debugEnabled) {
+            const targetCount = targets.length;
+            const collectionInfo = targets.length > 1 ? `${targetCount} instances via global-registry` : 'single instance';
+            if (alreadyLoaded) {
+                this.debugLogger(`Static loadForAll: Using cached data for relations [${relationNames.join(', ')}] on ${modelName}#${instanceId} (${collectionInfo})`);
+            }
+            else {
+                this.debugLogger(`Static loadForAll: Making fresh DB call for relations [${relationNames.join(', ')}] on ${modelName}#${instanceId} (loading for ${collectionInfo})`);
+            }
+        }
+        // If not already loaded, load immediately for all targets
+        if (!alreadyLoaded) {
+            await this.load(targets, relations);
+            // Mark as globally loaded
+            this.globalRelationState.set(globalStateKey, new Set(relationNames));
+            // Also mark each individual instance as processed
+            for (const target of targets) {
+                const targetId = target.id;
+                if (targetId) {
+                    const targetStateKey = `${modelName}:${targetId}:${relationNames.join(',')}`;
+                    this.globalRelationState.set(targetStateKey, new Set(relationNames));
+                }
+            }
+            if (this.debugEnabled) {
+                this.debugLogger(`Static loadForAll: Marked relations as globally loaded: ${globalStateKey} (${targets.length} instances)`);
+            }
+        }
+        else if (globallyLoaded && !locallyLoaded) {
+            // Relations are globally loaded - populate from cache
+            for (const relationName of relationNames) {
+                const cacheKey = `${modelName}:${instanceId}:${relationName}`;
+                const cachedData = this.globalRelationDataCache.get(cacheKey);
+                if (cachedData !== undefined) {
+                    instance[relationName] = cachedData;
+                    // Mark relation as loaded on this instance
+                    try {
+                        const holder = instance.__relations || {};
+                        if (!instance.__relations) {
+                            Object.defineProperty(instance, '__relations', {
+                                value: holder,
+                                enumerable: false,
+                                configurable: true,
+                                writable: true
+                            });
+                        }
+                        holder[relationName] = true;
+                    }
+                    catch { /* no-op */ }
+                }
+            }
+            if (this.debugEnabled) {
+                this.debugLogger(`Static loadForAll: Populated relations from cache for isolated instance: ${modelName}#${instanceId}`);
+            }
+        }
+        // Return the instance with loaded relations available
+        return instance;
+    }
     // Copy relations from the global registry to target instances
     static async copyRelationsFromRegistry(instances, relations) {
         if (instances.length === 0)
