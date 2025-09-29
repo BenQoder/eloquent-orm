@@ -2303,8 +2303,11 @@ class Eloquent {
         const modelName = this.constructor.name;
         const instanceId = (this as any).id;
 
-        // Parse relation names to check if already loaded
+        // Parse relation names to check if already loaded (top-level only for __relations check)
         const relationNames = (this.constructor as typeof Eloquent).parseRelationNames(relations);
+
+        // Parse full relation names including nested paths for cache key
+        const fullRelationNames = (this.constructor as typeof Eloquent).parseFullRelationNames(relations);
 
         // Check if already loaded via collection OR global registry
         let alreadyLoaded = false;
@@ -2364,7 +2367,7 @@ class Eloquent {
 
                     // Debug logging for registry hits
                     if ((Eloquent as any).debugEnabled) {
-                        (Eloquent as any).debugLogger(`loadForAll: Using registry cached data for relations [${relationNames.join(', ')}] on ${this.constructor.name}#${instanceId}`);
+                        (Eloquent as any).debugLogger(`loadForAll: Using registry cached data for relations [${fullRelationNames.join(', ')}] on ${this.constructor.name}#${instanceId}`);
                     }
                 }
             }
@@ -2375,9 +2378,9 @@ class Eloquent {
             const targetCount = targets.length;
             const instanceId = (this as any).id || 'unknown';
             if (alreadyLoaded) {
-                (Eloquent as any).debugLogger(`loadForAll: Using cached data for relations [${relationNames.join(', ')}] on ${this.constructor.name}#${instanceId} (${targetCount} instances in collection)`);
+                (Eloquent as any).debugLogger(`loadForAll: Using cached data for relations [${fullRelationNames.join(', ')}] on ${this.constructor.name}#${instanceId} (${targetCount} instances in collection)`);
             } else {
-                (Eloquent as any).debugLogger(`loadForAll: Making fresh DB call for relations [${relationNames.join(', ')}] on ${this.constructor.name}#${instanceId} (loading for ${targetCount} instances)`);
+                (Eloquent as any).debugLogger(`loadForAll: Making fresh DB call for relations [${fullRelationNames.join(', ')}] on ${this.constructor.name}#${instanceId} (loading for ${targetCount} instances)`);
             }
         }
 
@@ -2386,10 +2389,11 @@ class Eloquent {
             const targetIds = targets.map((t: any) => t.id).filter(id => id !== undefined);
 
             // Use collection ID for the cache key if available, otherwise use instance ID
+            // Use full relation names (including nested paths) for the cache key
             const cacheKey = collectionId
-                ? `${collectionId}:${relationNames.sort().join(',')}`
+                ? `${collectionId}:${fullRelationNames.sort().join(',')}`
                 : instanceId !== undefined
-                    ? (Eloquent as any).getLoadingCacheKey(modelName, [instanceId], relationNames)
+                    ? (Eloquent as any).getLoadingCacheKey(modelName, [instanceId], fullRelationNames)
                     : null;
 
             const loadingPromises = (Eloquent as any).getLoadingPromises();
@@ -2398,7 +2402,7 @@ class Eloquent {
             if (cacheKey && loadingPromises.has(cacheKey)) {
                 // Another call is already loading - wait for it
                 if ((Eloquent as any).debugEnabled) {
-                    (Eloquent as any).debugLogger(`loadForAll: Waiting for concurrent load operation for relations [${relationNames.join(', ')}] on ${this.constructor.name}#${instanceId}`);
+                    (Eloquent as any).debugLogger(`loadForAll: Waiting for concurrent load operation for relations [${fullRelationNames.join(', ')}] on ${this.constructor.name}#${instanceId}`);
                 }
                 await loadingPromises.get(cacheKey);
             } else if (cacheKey) {
@@ -2406,7 +2410,7 @@ class Eloquent {
                 const loadPromise = (async () => {
                     try {
                         if ((Eloquent as any).debugEnabled) {
-                            (Eloquent as any).debugLogger(`loadForAll: Starting DB load for relations [${relationNames.join(', ')}] on ${this.constructor.name} (${targetIds.length} instances)`);
+                            (Eloquent as any).debugLogger(`loadForAll: Starting DB load for relations [${fullRelationNames.join(', ')}] on ${this.constructor.name} (${targetIds.length} instances)`);
                         }
 
                         await (this.constructor as typeof Eloquent).load(targets, relations);
@@ -2538,6 +2542,29 @@ class Eloquent {
             return relations.map(r => r.split(':')[0]).map(n => n.split('.')[0]);
         } else if (relations && typeof relations === 'object') {
             return Object.keys(relations).map(n => n.split('.')[0]);
+        }
+        return [];
+    }
+
+    // Parse full relation names including nested paths (e.g., 'business.owner' stays as 'business.owner')
+    private static parseFullRelationNames(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): string[] {
+        if (typeof relations === 'string') {
+            return [relations.split(':')[0]];
+        } else if (Array.isArray(relations)) {
+            return relations.map(r => r.split(':')[0]);
+        } else if (relations && typeof relations === 'object') {
+            const result: string[] = [];
+            for (const key of Object.keys(relations)) {
+                result.push(key);
+                const value = relations[key];
+                // If the value is an array of nested relations, include them
+                if (Array.isArray(value)) {
+                    value.forEach(nested => {
+                        result.push(`${key}.${nested}`);
+                    });
+                }
+            }
+            return result;
         }
         return [];
     }

@@ -259,6 +259,7 @@ declare class Eloquent {
     static loadMissing(instances: Eloquent[], relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): Promise<void>;
     static loadCount(instances: Eloquent[], relations: string | string[] | Record<string, (query: QueryBuilder) => void>): Promise<void>;
     private static parseRelationNames;
+    private static parseFullRelationNames;
 }
 export default Eloquent;
 //# sourceMappingURL=Eloquent.d.ts.map
