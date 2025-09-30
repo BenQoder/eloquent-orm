@@ -712,7 +712,7 @@ class QueryBuilder {
             if (parts.length > 1) {
                 const subRelations = [parts.slice(1).join('.')];
                 const relValues = instances
-                    .map(inst => inst.__relations && inst.__relations[relationKey])
+                    .map(inst => inst[relationKey])
                     .filter((v) => v !== null && v !== undefined);
                 if (!cfg)
                     continue;
@@ -760,7 +760,11 @@ class QueryBuilder {
                         else
                             list.push(v);
                     }
-                    await this.loadRelations(list, subRelations, cfg.model, fullPath);
+                    // Resolve model if it's a string
+                    const nestedModel = typeof cfg.model === 'string'
+                        ? Eloquent.getModelForMorphType(cfg.model)
+                        : cfg.model;
+                    await this.loadRelations(list, subRelations, nestedModel, fullPath);
                 }
             }
         }

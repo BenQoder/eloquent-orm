@@ -875,7 +875,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             if (parts.length > 1) {
                 const subRelations = [parts.slice(1).join('.')];
                 const relValues = instances
-                    .map(inst => (inst as any).__relations && (inst as any).__relations[relationKey])
+                    .map(inst => (inst as any)[relationKey])
                     .filter((v: any) => v !== null && v !== undefined);
                 if (!cfg) continue;
                 if (cfg.type === 'morphTo') {
@@ -909,7 +909,11 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                         if (Array.isArray(v)) list.push(...v);
                         else list.push(v);
                     }
-                    await this.loadRelations(list, subRelations, cfg.model, fullPath);
+                    // Resolve model if it's a string
+                    const nestedModel = typeof cfg.model === 'string'
+                        ? (Eloquent as any).getModelForMorphType(cfg.model)
+                        : cfg.model;
+                    await this.loadRelations(list, subRelations, nestedModel, fullPath);
                 }
             }
         }
