@@ -278,14 +278,53 @@ class Post extends Eloquent {
 
 ```typescript
 // Load single relation
-const users = await User.query().with('posts').get();
+const authors = await Author.query()
+    .with('books')
+    .get<Author & { books: Book[] }>();
 
 // Load multiple relations
-const users = await User.query().with(['posts', 'profile']).get();
+const authors = await Author.query()
+    .with(['books', 'profile'])
+    .get<Author & { books: Book[]; profile: Profile }>();
 
-// Load nested relations
-const users = await User.query().with('posts.comments').get();
+// Load nested relations using dot notation
+const authors = await Author.query()
+    .with('books.reviews')
+    .get<Author & { books: (Book & { reviews: Review[] })[] }>();
 ```
+
+### Nested Relation Loading
+
+You can load deeply nested relations using dot notation. Each level of the relation path is separated by a dot:
+
+```typescript
+// Load author -> books -> reviews
+const authors = await Author.query()
+    .with('books.reviews')
+    .get<Author & { books: (Book & { reviews: Review[] })[] }>();
+
+// Load multiple nested paths
+const authors = await Author.query()
+    .with(['books.reviews', 'books.publisher', 'profile.address'])
+    .get<Author & {
+        books: (Book & {
+            reviews: Review[];
+            publisher: Publisher;
+        })[];
+        profile: Profile & { address: Address };
+    }>();
+
+// Deeply nested relations (3+ levels)
+const authors = await Author.query()
+    .with('books.reviews.author')
+    .get<Author & {
+        books: (Book & {
+            reviews: (Review & { author: Author })[];
+        })[];
+    }>();
+```
+
+**Important**: When using nested relations, make sure each model in the chain has the proper `relationsTypes` defined to enable type-safe loading.
 
 ### Automatic Relationship Autoloading
 
@@ -313,51 +352,136 @@ Note: JS property access is synchronous; prefer an explicit load call before rea
 Load relations for the entire collection from any instance. Already-loaded relations are skipped.
 
 ```typescript
-const products = await Product.query().limit(5).get();
+const books = await Book.query().limit(5).get();
 
 // Single relation across all items
-await products[0].loadForAll('business');
+await books[0].loadForAll<Book & { author: Author }>('author');
 
 // Multiple and nested relations (variadic)
-await products[0].loadForAll('business', 'business.orders', 'business.orders.items');
+await books[0].loadForAll<Book & {
+    author: Author & { profile: Profile };
+    reviews: Review[];
+}>('author', 'author.profile', 'reviews');
 
-// Tuple/array literal form
-await products[0].loadForAll(['business', 'categories'] as const);
+// Array form
+await books[0].loadForAll<Book & { author: Author; publisher: Publisher }>([
+    'author',
+    'publisher'
+]);
 ```
 
 Constraints and column selection:
 
 ```typescript
 // Constrain relations
-await products[0].loadForAll({
-	business: (q) => q.where('status', 'active'),
-	'business.orders': (q) => q.where('total', '>', 100),
+await books[0].loadForAll({
+	author: (q) => q.where('status', 'active'),
+	reviews: (q) => q.where('rating', '>', 3),
 });
 
 // Select columns
-await products[0].loadForAll({ business: ['id', 'name'] });
+await books[0].loadForAll({ author: ['id', 'name', 'email'] });
 ```
 
 Typing behavior:
 
 ```typescript
 // Returns instance augmented with the requested keys
-const p = products[0];
-const withBiz = await p.loadForAll('business');
-// withBiz: Product & { business: Business }
+const book = books[0];
+const withAuthor = await book.loadForAll<Book & { author: Author }>('author');
+// withAuthor: Book & { author: Author }
 
-const withMore = await p.loadForAll('business', 'categories');
-// withMore: Product & { business: Business; categories: ProductCategory[] }
-
-const rels = ['business', 'categories'] as const;
-const withTuple = await p.loadForAll(rels);
-// withTuple: Product & { business: Business; categories: ProductCategory[] }
+const withMore = await book.loadForAll<Book & {
+    author: Author;
+    publisher: Publisher;
+}>('author', 'publisher');
+// withMore: Book & { author: Author; publisher: Publisher }
 ```
+
+### Collection ID System: Automatic N+1 Prevention
+
+The ORM includes an intelligent **Collection ID system** that automatically prevents N+1 query problems by batching relation loads across all instances in a collection. This works transparently without any configuration.
+
+#### How It Works
+
+When models are retrieved together (via `get()`, `with()`, or `loadForAll()`), they are assigned a shared **collection ID**. When loading relations, the ORM:
+
+1. Detects that instances share a collection ID
+2. Automatically batches the relation query for ALL instances in that collection
+3. Distributes the results back to each instance
+
+This means **one query per relation** instead of one query per instance.
+
+#### Example: Efficient Query Batching
+
+```typescript
+// Fetch 10 books
+const books = await Book.query().limit(10).get();
+
+// Load author for the first book - triggers batch load for ALL 10 books
+await books[0].loadForAll<Book & { author: Author }>('author');
+
+// Result: Only 2 queries total
+// 1. SELECT * FROM books LIMIT 10
+// 2. SELECT * FROM authors WHERE id IN (1,2,3,4,5,6,7,8,9,10)
+
+// All books now have their author loaded
+console.log(books[5].author.name); // No additional query needed
+```
+
+#### Nested Relations Are Also Batched
+
+The Collection ID system works recursively for nested relations:
+
+```typescript
+const books = await Book.query().limit(10).get();
+
+// Load author and author's profile for all books
+await books[0].loadForAll<Book & {
+    author: Author & { profile: Profile };
+}>('author.profile');
+
+// Result: Only 3 queries total
+// 1. SELECT * FROM books LIMIT 10
+// 2. SELECT * FROM authors WHERE id IN (...)
+// 3. SELECT * FROM profiles WHERE author_id IN (...)
+```
+
+#### Deep Nesting Example
+
+```typescript
+const books = await Book.query().limit(5).get();
+
+// Load deeply nested relations
+await books[0].loadForAll<Book & {
+    author: Author & {
+        profile: Profile & { address: Address };
+    };
+    reviews: (Review & { reviewer: Author })[];
+}>(['author.profile.address', 'reviews.reviewer']);
+
+// Result: Only 6 queries total instead of 100+ without batching
+// 1. SELECT * FROM books LIMIT 5
+// 2. SELECT * FROM authors WHERE id IN (...) -- for books.author
+// 3. SELECT * FROM profiles WHERE author_id IN (...) -- for author.profile
+// 4. SELECT * FROM addresses WHERE profile_id IN (...) -- for profile.address
+// 5. SELECT * FROM reviews WHERE book_id IN (...) -- for books.reviews
+// 6. SELECT * FROM authors WHERE id IN (...) -- for reviews.reviewer
+```
+
+#### Benefits
+
+- **Zero configuration**: Works automatically for all collections
+- **Prevents N+1 queries**: One query per relation, not per instance
+- **Works with nested relations**: Batches at every level
+- **Transparent**: No API changes needed, just works
+- **Efficient**: Uses `WHERE IN` clauses for bulk loading
 
 Implementation notes:
 
-- The load is batched and respects constraints per relation key.
-- The method only augments with keys you request; nothing extra is added to the return type.
+- The load is batched automatically and respects constraints per relation key
+- Already-loaded relations are skipped to avoid redundant queries
+- The method only augments with keys you request; nothing extra is added to the return type
 
 ````
 

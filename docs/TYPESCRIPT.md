@@ -180,29 +180,122 @@ class User extends Eloquent {
 }
 ```
 
-### Automatic Relation Typing
+### Explicit Type Parameters for Relations
 
-When you eager load relations, TypeScript automatically includes them in the type:
+**IMPORTANT**: When working with relations, you must provide explicit type parameters to ensure TypeScript correctly infers the loaded relation types. This applies to all data-fetching methods.
+
+#### Why Explicit Type Parameters Are Required
+
+TypeScript's type system cannot automatically infer which relations are loaded at runtime. The `with()` method accepts string literals that are validated at runtime, but TypeScript needs explicit type information to provide compile-time safety:
 
 ```typescript
-// Basic query - no relations loaded
-const users = await User.query().get();
-// Type: User[]
+// ❌ Without explicit type parameter
+const authors = await Author.query().with('books').get();
+// authors[0].books - TypeScript error: Property 'books' does not exist
 
-// With single relation
-const usersWithPosts = await User.query().with('posts').get();
-// Type: (User & { posts: Post[] })[]
+// ✅ With explicit type parameter
+const authors = await Author.query()
+    .with('books')
+    .get<Author & { books: Book[] }>();
+// authors[0].books - Properly typed as Book[]
+```
 
-// With multiple relations
-const usersWithPostsAndProfile = await User.query()
-    .with(['posts', 'profile'])
-    .get();
-// Type: (User & { posts: Post[]; profile: Profile })[]
+#### Data-Fetching Methods Requiring Explicit Types
 
-// Accessing loaded relations
-const user = usersWithPosts[0];
-console.log(user.posts.length);        // ✅ TypeScript knows posts is Post[]
-console.log(user.posts[0].title);      // ✅ TypeScript knows Post properties
+**get()** - Fetch multiple records
+```typescript
+const authors = await Author.query()
+    .with('books')
+    .get<Author & { books: Book[] }>();
+
+// Multiple relations
+const authors = await Author.query()
+    .with(['books', 'profile'])
+    .get<Author & { books: Book[]; profile: Profile }>();
+
+// Nested relations
+const authors = await Author.query()
+    .with(['books.reviews', 'profile.address'])
+    .get<Author & {
+        books: (Book & { reviews: Review[] })[];
+        profile: Profile & { address: Address };
+    }>();
+```
+
+**first()** - Fetch single record
+```typescript
+const author = await Author.query()
+    .with('books')
+    .first<Author & { books: Book[] }>();
+// Type: (Author & { books: Book[] }) | null
+```
+
+**find()** - Find by primary key
+```typescript
+const author = await Author.query()
+    .with('books')
+    .find<Author & { books: Book[] }>(1);
+// Type: (Author & { books: Book[] }) | null
+```
+
+**findOrFail()** - Find by primary key or throw
+```typescript
+const author = await Author.query()
+    .with('books')
+    .findOrFail<Author & { books: Book[] }>(1);
+// Type: Author & { books: Book[] }
+```
+
+**load()** - Lazy load relations on instance
+```typescript
+const author = await Author.query().first();
+const authorWithBooks = await author.load<Author & { books: Book[] }>(['books']);
+// Type: Author & { books: Book[] }
+
+// Multiple relations
+const authorWithMore = await author.load<
+    Author & { books: Book[]; profile: Profile }
+>(['books', 'profile']);
+```
+
+**loadForAll()** - Load relations for entire collection
+```typescript
+const authors = await Author.query().limit(5).get();
+
+// Single relation
+const authorWithBooks = await authors[0].loadForAll<
+    Author & { books: Book[] }
+>(['books']);
+
+// Multiple relations
+const authorWithRelations = await authors[0].loadForAll<
+    Author & { books: Book[]; profile: Profile }
+>(['books', 'profile']);
+
+// Nested relations
+const authorWithNested = await authors[0].loadForAll<
+    Author & {
+        books: (Book & { reviews: Review[] })[];
+        profile: Profile & { address: Address };
+    }
+>(['books.reviews', 'profile.address']);
+```
+
+### Automatic Relation Typing (When Using Explicit Parameters)
+
+Once you provide explicit type parameters, TypeScript will correctly type all relation access:
+
+```typescript
+// With explicit type parameter
+const authors = await Author.query()
+    .with(['books', 'profile'])
+    .get<Author & { books: Book[]; profile: Profile }>();
+
+// Accessing loaded relations - fully typed
+const author = authors[0];
+console.log(author.books.length);        // ✅ TypeScript knows books is Book[]
+console.log(author.books[0].title);      // ✅ TypeScript knows Book properties
+console.log(author.profile.bio);         // ✅ TypeScript knows Profile properties
 ```
 
 ### Relation Query Types
