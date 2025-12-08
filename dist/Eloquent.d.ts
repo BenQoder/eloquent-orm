@@ -15,6 +15,7 @@
  * @readonly
  */
 import type { z } from 'zod';
+import { HasMany, HasOne, BelongsTo, BelongsToMany, MorphMany, MorphOne, MorphTo, MorphOneOfMany, HasManyThrough, HasOneThrough } from './relations';
 type RelationsOf<T> = T extends {
     relationsTypes: infer RT;
 } ? RT : {};
@@ -164,7 +165,7 @@ declare class ThroughBuilder {
     private instance;
     private throughRelation;
     constructor(instance: Eloquent, throughRelation: string);
-    has(finalRelation: string): QueryBuilder<any, never>;
+    has(finalRelation: string): HasOneThrough<any> | HasManyThrough<any>;
 }
 declare class Eloquent {
     [key: string]: any;
@@ -198,33 +199,37 @@ declare class Eloquent {
     static useConnection(connection: any, morphs?: Record<string, typeof Eloquent>): void;
     static getRelationConfig(model: typeof Eloquent, relationName: string): any | null;
     static describeRelation(model: typeof Eloquent, relationName: string): any | null;
-    belongsTo<T extends typeof Eloquent>(related: T, foreignKey: string, ownerKey?: string): QueryBuilder<T, never>;
-    belongsTo(related: string, foreignKey: string, ownerKey?: string): QueryBuilder<any, never>;
-    hasMany<T extends typeof Eloquent>(related: T, foreignKey: string, localKey?: string): QueryBuilder<T, never>;
-    hasMany(related: string, foreignKey: string, localKey?: string): QueryBuilder<any, never>;
-    hasOne<T extends typeof Eloquent>(related: T, foreignKey: string, localKey?: string): QueryBuilder<T, never>;
-    hasOne(related: string, foreignKey: string, localKey?: string): QueryBuilder<any, never>;
+    belongsTo<T extends typeof Eloquent>(related: T, foreignKey: string, ownerKey?: string): BelongsTo<InstanceType<T>>;
+    belongsTo(related: string, foreignKey: string, ownerKey?: string): BelongsTo<Eloquent>;
+    hasMany<T extends typeof Eloquent>(related: T, foreignKey: string, localKey?: string): HasMany<InstanceType<T>>;
+    hasMany(related: string, foreignKey: string, localKey?: string): HasMany<Eloquent>;
+    hasOne<T extends typeof Eloquent>(related: T, foreignKey: string, localKey?: string): HasOne<InstanceType<T>>;
+    hasOne(related: string, foreignKey: string, localKey?: string): HasOne<Eloquent>;
     hasOneOfMany<T extends typeof Eloquent>(related: T, foreignKey: string, column?: string, aggregate?: 'min' | 'max', localKey?: string): QueryBuilder<T, never>;
     hasOneOfMany(related: string, foreignKey: string, column?: string, aggregate?: 'min' | 'max', localKey?: string): QueryBuilder<any, never>;
     latestOfMany(related: typeof Eloquent | string, foreignKey: string, column?: string, localKey?: string): QueryBuilder<any, never>;
     oldestOfMany(related: typeof Eloquent | string, foreignKey: string, column?: string, localKey?: string): QueryBuilder<any, never>;
-    morphOne<T extends typeof Eloquent>(related: T, name: string, typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<T, never>;
-    morphOne(related: string, name: string, typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<any, never>;
-    morphOneOfMany(related: typeof Eloquent | string, name: string, column?: string, aggregate?: 'min' | 'max', typeColumn?: string, idColumn?: string, localKey?: string): any;
-    latestMorphOne(related: typeof Eloquent | string, name: string, column?: string, typeColumn?: string, idColumn?: string, localKey?: string): any;
-    oldestMorphOne(related: typeof Eloquent | string, name: string, column?: string, typeColumn?: string, idColumn?: string, localKey?: string): any;
-    morphMany<T extends typeof Eloquent>(related: T, name: string, typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<T, never>;
-    morphMany(related: string, name: string, typeColumn?: string, idColumn?: string, localKey?: string): QueryBuilder<any, never>;
-    morphTo<T extends typeof Eloquent>(name: string, typeColumn?: string, idColumn?: string): QueryBuilder<T, never>;
+    morphOne<T extends typeof Eloquent>(related: T, name: string, typeColumn?: string, idColumn?: string, localKey?: string): MorphOne<InstanceType<T>>;
+    morphOne(related: string, name: string, typeColumn?: string, idColumn?: string, localKey?: string): MorphOne<Eloquent>;
+    morphOneOfMany<T extends typeof Eloquent>(related: T, name: string, column?: string, aggregate?: 'min' | 'max', typeColumn?: string, idColumn?: string, localKey?: string): MorphOneOfMany<InstanceType<T>>;
+    morphOneOfMany(related: string, name: string, column?: string, aggregate?: 'min' | 'max', typeColumn?: string, idColumn?: string, localKey?: string): MorphOneOfMany<Eloquent>;
+    latestMorphOne<T extends typeof Eloquent>(related: T, name: string, column?: string, typeColumn?: string, idColumn?: string, localKey?: string): MorphOneOfMany<InstanceType<T>>;
+    latestMorphOne(related: string, name: string, column?: string, typeColumn?: string, idColumn?: string, localKey?: string): MorphOneOfMany<Eloquent>;
+    oldestMorphOne<T extends typeof Eloquent>(related: T, name: string, column?: string, typeColumn?: string, idColumn?: string, localKey?: string): MorphOneOfMany<InstanceType<T>>;
+    oldestMorphOne(related: string, name: string, column?: string, typeColumn?: string, idColumn?: string, localKey?: string): MorphOneOfMany<Eloquent>;
+    morphMany<T extends typeof Eloquent>(related: T, name: string, typeColumn?: string, idColumn?: string, localKey?: string): MorphMany<InstanceType<T>>;
+    morphMany(related: string, name: string, typeColumn?: string, idColumn?: string, localKey?: string): MorphMany<Eloquent>;
+    morphTo<T extends typeof Eloquent>(name: string, typeColumn?: string, idColumn?: string): MorphTo<InstanceType<T>>;
     static registerMorphMap(map: Record<string, typeof Eloquent>): void;
     static getMorphTypeForModel(model: typeof Eloquent): string;
     static getModelForMorphType(type: string): typeof Eloquent | null;
     static getPossibleMorphTypesForModel(model: typeof Eloquent): string[];
-    hasOneThrough<T extends typeof Eloquent>(related: T, through: typeof Eloquent, firstKey?: string, secondKey?: string, localKey?: string, secondLocalKey?: string): QueryBuilder<T, never>;
-    hasManyThrough<T extends typeof Eloquent>(related: T, through: typeof Eloquent, firstKey?: string, secondKey?: string, localKey?: string, secondLocalKey?: string): QueryBuilder<T, never>;
-    hasManyThrough(related: string, through: string, firstKey?: string, secondKey?: string, localKey?: string, secondLocalKey?: string): QueryBuilder<any, never>;
-    belongsToMany<T extends typeof Eloquent>(related: T, table?: string, foreignPivotKey?: string, relatedPivotKey?: string, parentKey?: string, relatedKey?: string): QueryBuilder<T, never>;
-    belongsToMany(related: string, table?: string, foreignPivotKey?: string, relatedPivotKey?: string, parentKey?: string, relatedKey?: string): QueryBuilder<any, never>;
+    hasOneThrough<T extends typeof Eloquent>(related: T, through: typeof Eloquent, firstKey?: string, secondKey?: string, localKey?: string, secondLocalKey?: string): HasOneThrough<InstanceType<T>>;
+    hasOneThrough(related: string, through: string, firstKey?: string, secondKey?: string, localKey?: string, secondLocalKey?: string): HasOneThrough<Eloquent>;
+    hasManyThrough<T extends typeof Eloquent>(related: T, through: typeof Eloquent, firstKey?: string, secondKey?: string, localKey?: string, secondLocalKey?: string): HasManyThrough<InstanceType<T>>;
+    hasManyThrough(related: string, through: string, firstKey?: string, secondKey?: string, localKey?: string, secondLocalKey?: string): HasManyThrough<Eloquent>;
+    belongsToMany<T extends typeof Eloquent>(related: T, table?: string, foreignPivotKey?: string, relatedPivotKey?: string, parentKey?: string, relatedKey?: string): BelongsToMany<InstanceType<T>>;
+    belongsToMany(related: string, table?: string, foreignPivotKey?: string, relatedPivotKey?: string, parentKey?: string, relatedKey?: string): BelongsToMany<Eloquent>;
     static getProperty(key: string): any;
     through(relationship: string): ThroughBuilder;
     static query<T extends typeof Eloquent>(this: T): QueryBuilder<T, never>;
@@ -262,4 +267,5 @@ declare class Eloquent {
     private static parseFullRelationNames;
 }
 export default Eloquent;
+export { QueryBuilder, Collection };
 //# sourceMappingURL=Eloquent.d.ts.map
