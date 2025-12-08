@@ -149,6 +149,23 @@ declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith ex
     firstOrFail<TExplicit>(): Promise<TExplicit>;
     get<TExplicit extends InstanceType<M> & Record<string, any> = WithRelations<InstanceType<M>, TWith>>(): Promise<Collection<TExplicit>>;
     get<TExplicit extends InstanceType<M> & Record<string, any>>(): Promise<Collection<TExplicit>>;
+    /**
+     * Execute query against Sushi (in-memory array) data
+     * Supports: where, whereIn, whereNull, orderBy, limit, offset
+     */
+    private getSushi;
+    /**
+     * Apply conditions to Sushi rows (in-memory filtering)
+     */
+    private applySushiConditions;
+    /**
+     * Evaluate a single condition against a Sushi row
+     */
+    private evaluateSushiCondition;
+    /**
+     * Apply orderBy to Sushi rows (in-memory sorting)
+     */
+    private applySushiOrderBy;
     private buildSelectSql;
     private ensureReadOnlySnippet;
     private ensureReadOnlySql;
@@ -175,6 +192,15 @@ declare class Eloquent {
     static connection: any;
     private static morphMap;
     static automaticallyEagerLoadRelationshipsEnabled: boolean;
+    protected static rows?: Record<string, any>[];
+    /**
+     * Check if this model uses Sushi (in-memory array data)
+     */
+    static usesSushi(): boolean;
+    /**
+     * Get the Sushi rows for this model
+     */
+    static getRows(): Record<string, any>[];
     static debugEnabled: boolean;
     static debugLogger: (message: string, data?: any) => void;
     static automaticallyEagerLoadRelationships(): void;

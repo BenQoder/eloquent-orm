@@ -55,11 +55,12 @@ This ORM enables a clean separation of concerns in multi-service architectures:
 - 🔒 **Read-Only Safety**: Runtime guards prevent mutation operations
 - 🏷️ **Full TypeScript Support**: Complete type inference with loaded relations
 - ✅ **Zod Integration**: Runtime validation with schema-based typing
-- 🔗 **Rich Relationships**: belongsTo, hasMany, hasOne, morphMany, belongsToMany
+- 🔗 **Rich Relationships**: belongsTo, hasMany, hasOne, morphMany, belongsToMany with chainable queries
 - 🔍 **Advanced Querying**: Eager loading, constraints, aggregates, soft deletes
 - ⚡ **Automatic Relationship Autoloading**: Optional global or per-collection lazy eager loading
 - 🎛️ **Query Builder**: Fluent, chainable query interface
 - 📊 **Aggregations**: Built-in sum, count, avg, min, max support
+- 🍣 **Sushi Support**: In-memory array data source (no database needed)
 - 🐛 **Debug Logging**: Built-in query logging with execution details
 - 🚀 **Performance**: Optimized for read-heavy workloads
 
@@ -291,6 +292,8 @@ const max = await User.query().max('updated_at');
 
 #### Defining Relationships
 
+Relationships use a **class-based architecture** where methods return Relation instances that support chainable queries:
+
 ```typescript
 class User extends Eloquent {
 	// One-to-One
@@ -328,6 +331,21 @@ class User extends Eloquent {
 		return this.through('posts').has('comments');
 	}
 }
+
+// Chainable queries on relationships
+const user = await User.query().find(1);
+
+// Add constraints directly on relationships
+const publishedPosts = await user.posts()
+	.where('published', true)
+	.orderBy('created_at', 'desc')
+	.get();
+
+const latestPost = await user.posts()
+	.orderBy('created_at', 'desc')
+	.first();
+
+const hasAnyPosts = await user.posts().exists();
 ```
 
 #### Eager Loading
@@ -479,6 +497,45 @@ User.query().withAvg('posts', 'rating');
 User.query().withMax('posts', 'created_at');
 User.query().withMin('posts', 'created_at');
 ```
+
+### Sushi - In-Memory Data Source
+
+Use in-memory arrays as a data source without needing a database connection:
+
+```typescript
+// Static data - no database needed!
+class Country extends Eloquent {
+  protected static rows = [
+    { id: 1, code: 'US', name: 'United States', population: 331000000 },
+    { id: 2, code: 'CA', name: 'Canada', population: 38000000 },
+    { id: 3, code: 'GB', name: 'United Kingdom', population: 67000000 },
+  ];
+}
+
+// Query just like a database model
+const countries = await Country.query()
+  .where('population', '>', 50000000)
+  .orderBy('name')
+  .get();
+```
+
+Or fetch from an API:
+
+```typescript
+class ApiCountry extends Eloquent {
+  static async getRows(): Promise<Record<string, any>[]> {
+    const response = await fetch('https://api.example.com/countries');
+    return response.json();
+  }
+}
+
+// Query API data with familiar Eloquent syntax
+const large = await ApiCountry.query()
+  .where('population', '>', 100000000)
+  .get();
+```
+
+See [Sushi Documentation](docs/SUSHI.md) for more details.
 
 ### Advanced Features
 

@@ -4,12 +4,135 @@ This guide covers all relationship types available in Eloquent ORM and how to us
 
 ## Table of Contents
 
+- [Class-Based Architecture](#class-based-architecture)
 - [Basic Relationships](#basic-relationships)
 - [Advanced Relationships](#advanced-relationships)
 - [Polymorphic Relationships](#polymorphic-relationships)
 - [Eager Loading](#eager-loading)
 - [Relationship Queries](#relationship-queries)
 - [TypeScript Integration](#typescript-integration)
+
+## Class-Based Architecture
+
+Eloquent ORM uses a **class-based relationship system** inspired by Laravel. Relationship methods return dedicated Relation class instances (`HasMany`, `BelongsTo`, `MorphMany`, etc.) that provide:
+
+1. **Chainable Query Methods**: Add constraints directly on relationships
+2. **Strong TypeScript Support**: Better type inference for relationship queries
+3. **Separation of Concerns**: Relationship logic in dedicated classes
+4. **Laravel Parity**: Familiar API for Laravel developers
+
+### Chainable Relationship Queries
+
+Relationship methods return Relation instances that support chainable queries:
+
+```typescript
+class User extends Eloquent {
+  posts() {
+    return this.hasMany(Post, 'user_id');
+  }
+
+  profile() {
+    return this.hasOne(Profile, 'user_id');
+  }
+}
+
+// Chainable queries on relationships
+const user = await User.query().find(1);
+
+// Filter and order related records
+const publishedPosts = await user.posts()
+  .where('published', true)
+  .orderBy('created_at', 'desc')
+  .get();
+
+// Get the latest post
+const latestPost = await user.posts()
+  .orderBy('created_at', 'desc')
+  .first();
+
+// Count with conditions
+const draftCount = await user.posts()
+  .where('published', false)
+  .count();
+
+// Check existence
+const hasPosts = await user.posts().exists();
+```
+
+### Available Relation Classes
+
+| Class | Method | Description |
+|-------|--------|-------------|
+| `HasOne` | `hasOne()` | One-to-one relationship |
+| `HasMany` | `hasMany()` | One-to-many relationship |
+| `BelongsTo` | `belongsTo()` | Inverse one-to-one/one-to-many |
+| `BelongsToMany` | `belongsToMany()` | Many-to-many through pivot table |
+| `MorphOne` | `morphOne()` | Polymorphic one-to-one |
+| `MorphMany` | `morphMany()` | Polymorphic one-to-many |
+| `MorphTo` | `morphTo()` | Inverse polymorphic relationship |
+| `HasOneOfMany` | `hasOneOfMany()` | One of many (latest, oldest, etc.) |
+| `HasManyThrough` | `hasManyThrough()` | Has many through intermediate model |
+| `HasOneThrough` | `hasOneThrough()` | Has one through intermediate model |
+
+### Chainable Methods on Relations
+
+All Relation classes support these chainable methods:
+
+```typescript
+// Filtering
+relation.where(column, value)
+relation.where(column, operator, value)
+relation.whereIn(column, values)
+relation.whereNotIn(column, values)
+relation.whereNull(column)
+relation.whereNotNull(column)
+relation.whereBetween(column, [min, max])
+relation.orWhere(column, value)
+
+// Ordering
+relation.orderBy(column, 'asc' | 'desc')
+
+// Limiting
+relation.limit(count)
+relation.offset(count)
+
+// Execution
+await relation.get()      // Get all matching records
+await relation.first()    // Get first matching record
+await relation.count()    // Count matching records
+await relation.exists()   // Check if any records exist
+```
+
+### Example: Complex Relationship Queries
+
+```typescript
+class Author extends Eloquent {
+  books() {
+    return this.hasMany(Book, 'author_id');
+  }
+}
+
+const author = await Author.query().find(1);
+
+// Get published books from 2024, ordered by rating
+const books2024 = await author.books()
+  .where('published', true)
+  .whereBetween('published_at', ['2024-01-01', '2024-12-31'])
+  .orderBy('rating', 'desc')
+  .limit(10)
+  .get();
+
+// Get the author's best-selling book
+const bestSeller = await author.books()
+  .where('published', true)
+  .orderBy('sales_count', 'desc')
+  .first();
+
+// Check if author has any drafts
+const hasDrafts = await author.books()
+  .where('published', false)
+  .exists();
+```
 
 ## Basic Relationships
 

@@ -303,6 +303,10 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
     // Removed write operations (insert, insertGetId, update, delete) to keep ORM read-only
 
     private async aggregate(functionName: string, column: string): Promise<any> {
+        // Check for Sushi - in-memory aggregate
+        if ((this.model as any).usesSushi()) {
+            return this.aggregateSushi(functionName, column);
+        }
         if (!Eloquent.connection) throw new Error('Database connection not initialized');
         const table = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
         let sql = `SELECT ${functionName}(${column}) as aggregate FROM ${table}`;
@@ -1472,7 +1476,10 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
     async first<TExplicit = WithRelations<InstanceType<M>, TWith>>(): Promise<TExplicit | null>;
     async first<TExplicit>(): Promise<TExplicit | null>;
     async first<TExplicit = WithRelations<InstanceType<M>, TWith>>(): Promise<TExplicit | null> {
-        if (!Eloquent.connection) throw new Error('Database connection not initialized');
+        // Check for Sushi first - no database needed
+        if (!(this.model as any).usesSushi() && !Eloquent.connection) {
+            throw new Error('Database connection not initialized');
+        }
         const one = this.clone().limit(1);
         const rows = await one.get();
         const result = (rows as any[])[0] as InstanceType<M> | undefined;
@@ -1495,6 +1502,11 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
     async get<TExplicit extends InstanceType<M> & Record<string, any> = WithRelations<InstanceType<M>, TWith>>(): Promise<Collection<TExplicit>>;
     async get<TExplicit extends InstanceType<M> & Record<string, any>>(): Promise<Collection<TExplicit>>;
     async get<TExplicit extends InstanceType<M> & Record<string, any> = WithRelations<InstanceType<M>, TWith>>(): Promise<Collection<TExplicit>> {
+        // Check if model uses Sushi (in-memory array data)
+        if ((this.model as any).usesSushi()) {
+            return this.getSushi<TExplicit>();
+        }
+
         if (!Eloquent.connection) throw new Error('Database connection not initialized');
         const hasUnions = this.unions.length > 0;
         const main = this.buildSelectSql({ includeOrderLimit: !hasUnions });
@@ -1588,6 +1600,243 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         });
 
         return collection as Collection<TExplicit>;
+    }
+
+    /**
+     * Execute aggregate function against Sushi (in-memory array) data
+     */
+    private async aggregateSushi(functionName: string, column: string): Promise<number> {
+        const fetchedRows = await (this.model as any).getRows();
+        let rows = [...fetchedRows] as Record<string, any>[];
+
+        // Apply conditions (filter)
+        rows = this.applySushiConditions(rows, this.conditions);
+
+        if (rows.length === 0) {
+            return functionName === 'COUNT' ? 0 : 0;
+        }
+
+        switch (functionName) {
+            case 'COUNT':
+                return column === '*' ? rows.length : rows.filter(r => r[column] !== null && r[column] !== undefined).length;
+            case 'SUM':
+                return rows.reduce((sum, r) => sum + (Number(r[column]) || 0), 0);
+            case 'AVG':
+                const values = rows.map(r => Number(r[column]) || 0);
+                return values.reduce((a, b) => a + b, 0) / values.length;
+            case 'MAX':
+                return Math.max(...rows.map(r => Number(r[column]) || 0));
+            case 'MIN':
+                return Math.min(...rows.map(r => Number(r[column]) || 0));
+            default:
+                return 0;
+        }
+    }
+
+    /**
+     * Execute query against Sushi (in-memory array) data
+     * Supports: where, whereIn, whereNull, orderBy, limit, offset
+     */
+    private async getSushi<TExplicit extends InstanceType<M> & Record<string, any>>(): Promise<Collection<TExplicit>> {
+        const fetchedRows = await (this.model as any).getRows();
+        let rows = [...fetchedRows] as Record<string, any>[];
+
+        this.debugLog('Executing Sushi query', {
+            model: this.model.name,
+            totalRows: rows.length,
+            conditions: this.conditions.length
+        });
+
+        // Apply conditions (filter)
+        rows = this.applySushiConditions(rows, this.conditions);
+
+        // Apply orderBy
+        if (this.orderByClauses.length > 0) {
+            rows = this.applySushiOrderBy(rows);
+        }
+
+        // Apply offset
+        if (this.offsetValue !== undefined && this.offsetValue > 0) {
+            rows = rows.slice(this.offsetValue);
+        }
+
+        // Apply limit
+        if (this.limitValue !== undefined) {
+            rows = rows.slice(0, this.limitValue);
+        }
+
+        // Select specific columns
+        if (this.selectColumns.length > 0 && !this.selectColumns.includes('*')) {
+            rows = rows.map(row => {
+                const selected: Record<string, any> = {};
+                for (const col of this.selectColumns) {
+                    if (col in row) {
+                        selected[col] = row[col];
+                    }
+                }
+                return selected;
+            });
+        }
+
+        // Create model instances
+        const instances = rows.map(row => {
+            const instance = new (this.model as any)() as InstanceType<M>;
+
+            // Zod validation/casting if schema provided
+            const schema = (this.model as any).schema as import('zod').ZodTypeAny | undefined;
+            const data = schema ? schema.parse(row) : row;
+
+            // Apply model casts if available
+            const casts = (this.model as any).casts;
+            if (casts) {
+                for (const [key, castType] of Object.entries(casts)) {
+                    if (key in (data as any)) {
+                        (data as any)[key] = this.applyCast((data as any)[key], castType as string);
+                    }
+                }
+            }
+
+            Object.assign(instance, data);
+            return this.createProxiedInstance(instance);
+        });
+
+        // Load relations
+        await this.loadRelations(instances, this.withRelations || []);
+
+        const collection = new Collection<WithRelations<InstanceType<M>, TWith>>();
+        collection.push(...(instances as WithRelations<InstanceType<M>, TWith>[]));
+
+        // Generate collection ID and register
+        const collectionId = (this.model as any).generateCollectionId();
+        const collectionsRegistry = (this.model as any).getCollectionsRegistry();
+        collectionsRegistry.set(collectionId, instances);
+
+        // Link instances to collection
+        for (const inst of instances) {
+            try {
+                Object.defineProperty(inst as any, '__collection', {
+                    value: collection,
+                    enumerable: false,
+                    configurable: true,
+                    writable: true
+                });
+                (inst as any).__collectionId = collectionId;
+            } catch {
+                // no-op
+            }
+        }
+
+        this.debugLog('Sushi query completed', { resultCount: instances.length });
+
+        return collection as Collection<TExplicit>;
+    }
+
+    /**
+     * Apply conditions to Sushi rows (in-memory filtering)
+     */
+    private applySushiConditions(rows: Record<string, any>[], conditions: Condition[]): Record<string, any>[] {
+        if (conditions.length === 0) return rows;
+
+        return rows.filter(row => {
+            let result = true;
+            for (let i = 0; i < conditions.length; i++) {
+                const cond = conditions[i];
+                const condResult = this.evaluateSushiCondition(row, cond);
+
+                if (i === 0) {
+                    result = condResult;
+                } else if (cond.operator === 'AND') {
+                    result = result && condResult;
+                } else {
+                    result = result || condResult;
+                }
+            }
+            return result;
+        });
+    }
+
+    /**
+     * Evaluate a single condition against a Sushi row
+     */
+    private evaluateSushiCondition(row: Record<string, any>, cond: Condition): boolean {
+        if ('group' in cond) {
+            // Nested group
+            const filtered = this.applySushiConditions([row], cond.group);
+            return filtered.length > 0;
+        }
+
+        // Handle raw conditions - skip them for Sushi (can't evaluate raw SQL)
+        if (cond.type === 'raw') {
+            return true;
+        }
+
+        const value = row[(cond as any).column];
+
+        switch (cond.type) {
+            case 'basic': {
+                const op = (cond as any).conditionOperator;
+                const target = cond.value;
+                switch (op) {
+                    case '=': return value == target;
+                    case '!=': case '<>': return value != target;
+                    case '>': return value > target;
+                    case '>=': return value >= target;
+                    case '<': return value < target;
+                    case '<=': return value <= target;
+                    case 'LIKE': case 'like': {
+                        if (typeof value !== 'string' || typeof target !== 'string') return false;
+                        // Convert SQL LIKE to regex
+                        const pattern = target.replace(/%/g, '.*').replace(/_/g, '.');
+                        return new RegExp(`^${pattern}$`, 'i').test(value);
+                    }
+                    default: return value == target;
+                }
+            }
+            case 'in':
+                return Array.isArray(cond.value) && cond.value.includes(value);
+            case 'not_in':
+                return Array.isArray(cond.value) && !cond.value.includes(value);
+            case 'null':
+                return value === null || value === undefined;
+            case 'not_null':
+                return value !== null && value !== undefined;
+            case 'between':
+                return value >= cond.value[0] && value <= cond.value[1];
+            case 'not_between':
+                return value < cond.value[0] || value > cond.value[1];
+            default:
+                return true;
+        }
+    }
+
+    /**
+     * Apply orderBy to Sushi rows (in-memory sorting)
+     */
+    private applySushiOrderBy(rows: Record<string, any>[]): Record<string, any>[] {
+        return [...rows].sort((a, b) => {
+            for (const clause of this.orderByClauses) {
+                const aVal = a[clause.column];
+                const bVal = b[clause.column];
+
+                let comparison = 0;
+                if (aVal === bVal) {
+                    comparison = 0;
+                } else if (aVal === null || aVal === undefined) {
+                    comparison = 1;
+                } else if (bVal === null || bVal === undefined) {
+                    comparison = -1;
+                } else if (typeof aVal === 'string' && typeof bVal === 'string') {
+                    comparison = aVal.localeCompare(bVal);
+                } else {
+                    comparison = aVal < bVal ? -1 : 1;
+                }
+
+                if (comparison !== 0) {
+                    return clause.direction === 'desc' ? -comparison : comparison;
+                }
+            }
+            return 0;
+        });
     }
 
     private buildSelectSql(options?: { includeOrderLimit?: boolean }): { sql: string; params: any[] } {
@@ -1832,6 +2081,32 @@ class Eloquent {
     static connection: any = null;
     private static morphMap: Record<string, typeof Eloquent> = {};
     public static automaticallyEagerLoadRelationshipsEnabled: boolean = false;
+
+    // Sushi support - static array data source (like Laravel's Sushi package)
+    protected static rows?: Record<string, any>[];
+
+    /**
+     * Check if this model uses Sushi (in-memory array data)
+     * Override this method to return true for API-based Sushi models
+     */
+    static usesSushi(): boolean {
+        // Check if model has static rows array
+        if (Array.isArray((this as any).rows)) {
+            return true;
+        }
+        // Check if model has overridden getRows (not the base Eloquent.getRows)
+        const hasOwnGetRows = Object.prototype.hasOwnProperty.call(this, 'getRows') ||
+            (this.getRows !== Eloquent.getRows);
+        return hasOwnGetRows;
+    }
+
+    /**
+     * Get the Sushi rows for this model (async - can fetch from API)
+     * Override this method to fetch data from an API or other async source
+     */
+    static async getRows(): Promise<Record<string, any>[]> {
+        return (this as any).rows || [];
+    }
 
     // Debug logging
     public static debugEnabled = false;

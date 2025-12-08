@@ -1392,6 +1392,10 @@ class QueryBuilder {
         return result;
     }
     async get() {
+        // Check if model uses Sushi (in-memory array data)
+        if (this.model.usesSushi()) {
+            return this.getSushi();
+        }
         if (!Eloquent.connection)
             throw new Error('Database connection not initialized');
         const hasUnions = this.unions.length > 0;
@@ -1482,6 +1486,195 @@ class QueryBuilder {
             relations: this.withRelations
         });
         return collection;
+    }
+    /**
+     * Execute query against Sushi (in-memory array) data
+     * Supports: where, whereIn, whereNull, orderBy, limit, offset
+     */
+    async getSushi() {
+        let rows = [...this.model.getRows()];
+        this.debugLog('Executing Sushi query', {
+            model: this.model.name,
+            totalRows: rows.length,
+            conditions: this.conditions.length
+        });
+        // Apply conditions (filter)
+        rows = this.applySushiConditions(rows, this.conditions);
+        // Apply orderBy
+        if (this.orderByClauses.length > 0) {
+            rows = this.applySushiOrderBy(rows);
+        }
+        // Apply offset
+        if (this.offsetValue !== undefined && this.offsetValue > 0) {
+            rows = rows.slice(this.offsetValue);
+        }
+        // Apply limit
+        if (this.limitValue !== undefined) {
+            rows = rows.slice(0, this.limitValue);
+        }
+        // Select specific columns
+        if (this.selectColumns.length > 0 && !this.selectColumns.includes('*')) {
+            rows = rows.map(row => {
+                const selected = {};
+                for (const col of this.selectColumns) {
+                    if (col in row) {
+                        selected[col] = row[col];
+                    }
+                }
+                return selected;
+            });
+        }
+        // Create model instances
+        const instances = rows.map(row => {
+            const instance = new this.model();
+            // Zod validation/casting if schema provided
+            const schema = this.model.schema;
+            const data = schema ? schema.parse(row) : row;
+            // Apply model casts if available
+            const casts = this.model.casts;
+            if (casts) {
+                for (const [key, castType] of Object.entries(casts)) {
+                    if (key in data) {
+                        data[key] = this.applyCast(data[key], castType);
+                    }
+                }
+            }
+            Object.assign(instance, data);
+            return this.createProxiedInstance(instance);
+        });
+        // Load relations
+        await this.loadRelations(instances, this.withRelations || []);
+        const collection = new Collection();
+        collection.push(...instances);
+        // Generate collection ID and register
+        const collectionId = this.model.generateCollectionId();
+        const collectionsRegistry = this.model.getCollectionsRegistry();
+        collectionsRegistry.set(collectionId, instances);
+        // Link instances to collection
+        for (const inst of instances) {
+            try {
+                Object.defineProperty(inst, '__collection', {
+                    value: collection,
+                    enumerable: false,
+                    configurable: true,
+                    writable: true
+                });
+                inst.__collectionId = collectionId;
+            }
+            catch {
+                // no-op
+            }
+        }
+        this.debugLog('Sushi query completed', { resultCount: instances.length });
+        return collection;
+    }
+    /**
+     * Apply conditions to Sushi rows (in-memory filtering)
+     */
+    applySushiConditions(rows, conditions) {
+        if (conditions.length === 0)
+            return rows;
+        return rows.filter(row => {
+            let result = true;
+            for (let i = 0; i < conditions.length; i++) {
+                const cond = conditions[i];
+                const condResult = this.evaluateSushiCondition(row, cond);
+                if (i === 0) {
+                    result = condResult;
+                }
+                else if (cond.operator === 'AND') {
+                    result = result && condResult;
+                }
+                else {
+                    result = result || condResult;
+                }
+            }
+            return result;
+        });
+    }
+    /**
+     * Evaluate a single condition against a Sushi row
+     */
+    evaluateSushiCondition(row, cond) {
+        if ('group' in cond) {
+            // Nested group
+            const filtered = this.applySushiConditions([row], cond.group);
+            return filtered.length > 0;
+        }
+        // Handle raw conditions - skip them for Sushi (can't evaluate raw SQL)
+        if (cond.type === 'raw') {
+            return true;
+        }
+        const value = row[cond.column];
+        switch (cond.type) {
+            case 'basic': {
+                const op = cond.conditionOperator;
+                const target = cond.value;
+                switch (op) {
+                    case '=': return value == target;
+                    case '!=':
+                    case '<>': return value != target;
+                    case '>': return value > target;
+                    case '>=': return value >= target;
+                    case '<': return value < target;
+                    case '<=': return value <= target;
+                    case 'LIKE':
+                    case 'like': {
+                        if (typeof value !== 'string' || typeof target !== 'string')
+                            return false;
+                        // Convert SQL LIKE to regex
+                        const pattern = target.replace(/%/g, '.*').replace(/_/g, '.');
+                        return new RegExp(`^${pattern}$`, 'i').test(value);
+                    }
+                    default: return value == target;
+                }
+            }
+            case 'in':
+                return Array.isArray(cond.value) && cond.value.includes(value);
+            case 'not_in':
+                return Array.isArray(cond.value) && !cond.value.includes(value);
+            case 'null':
+                return value === null || value === undefined;
+            case 'not_null':
+                return value !== null && value !== undefined;
+            case 'between':
+                return value >= cond.value[0] && value <= cond.value[1];
+            case 'not_between':
+                return value < cond.value[0] || value > cond.value[1];
+            default:
+                return true;
+        }
+    }
+    /**
+     * Apply orderBy to Sushi rows (in-memory sorting)
+     */
+    applySushiOrderBy(rows) {
+        return [...rows].sort((a, b) => {
+            for (const clause of this.orderByClauses) {
+                const aVal = a[clause.column];
+                const bVal = b[clause.column];
+                let comparison = 0;
+                if (aVal === bVal) {
+                    comparison = 0;
+                }
+                else if (aVal === null || aVal === undefined) {
+                    comparison = 1;
+                }
+                else if (bVal === null || bVal === undefined) {
+                    comparison = -1;
+                }
+                else if (typeof aVal === 'string' && typeof bVal === 'string') {
+                    comparison = aVal.localeCompare(bVal);
+                }
+                else {
+                    comparison = aVal < bVal ? -1 : 1;
+                }
+                if (comparison !== 0) {
+                    return clause.direction === 'desc' ? -comparison : comparison;
+                }
+            }
+            return 0;
+        });
     }
     buildSelectSql(options) {
         const includeOrderLimit = options?.includeOrderLimit !== false;
@@ -1703,6 +1896,18 @@ class ThroughBuilder {
     }
 }
 class Eloquent {
+    /**
+     * Check if this model uses Sushi (in-memory array data)
+     */
+    static usesSushi() {
+        return Array.isArray(this.rows);
+    }
+    /**
+     * Get the Sushi rows for this model
+     */
+    static getRows() {
+        return this.rows || [];
+    }
     static automaticallyEagerLoadRelationships() {
         Eloquent.automaticallyEagerLoadRelationshipsEnabled = true;
     }
