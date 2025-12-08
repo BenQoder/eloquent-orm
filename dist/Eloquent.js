@@ -998,6 +998,65 @@ class QueryBuilder {
                 catch { /* no-op */ }
             }
         }
+        else if (type === 'morphOneOfMany') {
+            // morphOneOfMany: Get one related record per parent based on aggregate (max/min) of a column
+            const RelatedModel = typeof config.model === 'string' ? Eloquent.getModelForMorphType(config.model) : config.model;
+            const name = config.morphName;
+            const typeColumn = config.typeColumn || `${name}_type`;
+            const idColumn = config.idColumn || `${name}_id`;
+            const localKey = config.localKey || 'id';
+            const column = config.column || 'created_at';
+            const aggregate = config.aggregate || 'max'; // 'max' for latest, 'min' for oldest
+            const localKeys = instances.map(inst => inst[localKey]).filter((id) => id !== null && id !== undefined);
+            if (localKeys.length === 0)
+                return;
+            const morphTypes = Eloquent.getPossibleMorphTypesForModel(model);
+            const relatedTable = RelatedModel.table || RelatedModel.name.toLowerCase() + 's';
+            const cb = this.withCallbacks && this.withCallbacks[fullPath];
+            // Use a subquery to find the record with max/min of the column for each parent
+            const relatedInstances = await this.getInBatches(localKeys, async (chunk) => {
+                const aggFn = aggregate === 'max' ? 'MAX' : 'MIN';
+                const qb = RelatedModel.query()
+                    .whereIn(typeColumn, morphTypes)
+                    .whereIn(idColumn, chunk)
+                    .whereRaw(`${relatedTable}.${column} = (
+                        SELECT ${aggFn}(sub.${column}) FROM ${relatedTable} sub
+                        WHERE sub.${typeColumn} = ${relatedTable}.${typeColumn}
+                        AND sub.${idColumn} = ${relatedTable}.${idColumn}
+                    )`);
+                if (cb)
+                    cb(qb);
+                return qb.get();
+            });
+            const relatedCollection = new Collection();
+            for (const rel of relatedInstances)
+                relatedCollection.push(rel);
+            for (const rel of relatedInstances) {
+                try {
+                    Object.defineProperty(rel, '__collection', { value: relatedCollection, enumerable: false, configurable: true, writable: true });
+                }
+                catch { }
+            }
+            const map = new Map();
+            for (const rel of relatedInstances) {
+                const key = rel[idColumn];
+                // Only keep the first (should be only one per parent anyway)
+                if (!map.has(key)) {
+                    map.set(key, rel);
+                }
+            }
+            for (const inst of instances) {
+                inst[relationName] = map.get(inst[localKey]) || null;
+                try {
+                    const holder = inst.__relations || {};
+                    if (!inst.__relations) {
+                        Object.defineProperty(inst, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
+                    }
+                    holder[relationName] = true;
+                }
+                catch { /* no-op */ }
+            }
+        }
         else if (type === 'morphTo') {
             const name = config.morphName;
             const typeColumn = config.typeColumn || `${name}_type`;
@@ -1407,6 +1466,7 @@ class QueryBuilder {
     }
     createProxiedInstance(instance) {
         const relationConfigs = new Map();
+        const accessorCache = new Map();
         // Get all possible relation names from the model
         const proto = instance.constructor.prototype;
         for (const key of Object.getOwnPropertyNames(proto)) {
@@ -1415,11 +1475,37 @@ class QueryBuilder {
                 relationConfigs.set(key, config);
             }
         }
+        // Helper to convert snake_case to PascalCase for accessor lookup
+        const toPascalCase = (str) => {
+            return str.split('_').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+        };
+        // Helper to find accessor method name for a property
+        const findAccessor = (prop) => {
+            if (accessorCache.has(prop)) {
+                return accessorCache.get(prop);
+            }
+            // Try getXxxAttribute format (e.g., full_name -> getFullNameAttribute)
+            const accessorName = `get${toPascalCase(prop)}Attribute`;
+            if (typeof proto[accessorName] === 'function') {
+                accessorCache.set(prop, accessorName);
+                return accessorName;
+            }
+            accessorCache.set(prop, null);
+            return null;
+        };
         return new Proxy(instance, {
             get: (target, prop) => {
                 // If it's a relationship and not loaded, check for auto-loading
                 if (relationConfigs.has(prop) && !(prop in target) && this.shouldAutoLoad(target, prop)) {
                     this.autoLoadRelation(target, prop);
+                }
+                // Check for Laravel-style accessor (getXxxAttribute)
+                // Only if prop is not already defined on target (allows native getters to take precedence)
+                if (typeof prop === 'string' && !Object.getOwnPropertyDescriptor(proto, prop)?.get) {
+                    const accessor = findAccessor(prop);
+                    if (accessor) {
+                        return target[accessor]();
+                    }
                 }
                 return target[prop];
             }
@@ -1785,6 +1871,18 @@ class Eloquent {
         fake.morphMany = (related, name, typeColumn, idColumn, localKey = 'id') => {
             const resolvedRelated = typeof related === 'string' ? related : related;
             return makeStub({ type: 'morphMany', model: resolvedRelated, morphName: name, typeColumn, idColumn, localKey });
+        };
+        fake.morphOneOfMany = (related, name, column = 'created_at', aggregate = 'max', typeColumn, idColumn, localKey = 'id') => {
+            const resolvedRelated = typeof related === 'string' ? related : related;
+            return makeStub({ type: 'morphOneOfMany', model: resolvedRelated, morphName: name, column, aggregate, typeColumn, idColumn, localKey });
+        };
+        fake.latestMorphOne = (related, name, column = 'created_at', typeColumn, idColumn, localKey = 'id') => {
+            const resolvedRelated = typeof related === 'string' ? related : related;
+            return makeStub({ type: 'morphOneOfMany', model: resolvedRelated, morphName: name, column, aggregate: 'max', typeColumn, idColumn, localKey });
+        };
+        fake.oldestMorphOne = (related, name, column = 'created_at', typeColumn, idColumn, localKey = 'id') => {
+            const resolvedRelated = typeof related === 'string' ? related : related;
+            return makeStub({ type: 'morphOneOfMany', model: resolvedRelated, morphName: name, column, aggregate: 'min', typeColumn, idColumn, localKey });
         };
         fake.morphTo = (name, typeColumn, idColumn) => makeStub({ type: 'morphTo', morphName: name, typeColumn, idColumn });
         fake.belongsToMany = (related, table, foreignPivotKey, relatedPivotKey, parentKey = 'id', relatedKey = 'id') => {
