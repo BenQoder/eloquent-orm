@@ -162,8 +162,19 @@ class QueryBuilder {
         }
         return result;
     }
+    async findOr(id, defaultValue) {
+        const result = await this.find(id);
+        if (result) {
+            return result;
+        }
+        return typeof defaultValue === 'function' ? defaultValue() : defaultValue;
+    }
     // Removed write operations (insert, insertGetId, update, delete) to keep ORM read-only
     async aggregate(functionName, column) {
+        // Check for Sushi - in-memory aggregate
+        if (this.model.usesSushi()) {
+            return this.aggregateSushi(functionName, column);
+        }
         if (!Eloquent.connection)
             throw new Error('Database connection not initialized');
         const table = this.tableName || this.model.table || this.model.name.toLowerCase() + 's';
@@ -297,6 +308,135 @@ class QueryBuilder {
         this.conditions.push({ operator: 'OR', type: 'not_between', column, value: values });
         return this;
     }
+    // Date-based where clauses
+    whereDate(column, operatorOrValue, value) {
+        if (value === undefined) {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `DATE(${column}) = ?`, bindings: [operatorOrValue] });
+        }
+        else {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `DATE(${column}) ${operatorOrValue} ?`, bindings: [value] });
+        }
+        return this;
+    }
+    whereMonth(column, operatorOrValue, value) {
+        if (value === undefined) {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `MONTH(${column}) = ?`, bindings: [operatorOrValue] });
+        }
+        else {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `MONTH(${column}) ${operatorOrValue} ?`, bindings: [value] });
+        }
+        return this;
+    }
+    whereYear(column, operatorOrValue, value) {
+        if (value === undefined) {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `YEAR(${column}) = ?`, bindings: [operatorOrValue] });
+        }
+        else {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `YEAR(${column}) ${operatorOrValue} ?`, bindings: [value] });
+        }
+        return this;
+    }
+    whereDay(column, operatorOrValue, value) {
+        if (value === undefined) {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `DAY(${column}) = ?`, bindings: [operatorOrValue] });
+        }
+        else {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `DAY(${column}) ${operatorOrValue} ?`, bindings: [value] });
+        }
+        return this;
+    }
+    whereTime(column, operatorOrValue, value) {
+        if (value === undefined) {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `TIME(${column}) = ?`, bindings: [operatorOrValue] });
+        }
+        else {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `TIME(${column}) ${operatorOrValue} ?`, bindings: [value] });
+        }
+        return this;
+    }
+    // whereNot - negate a condition or group
+    whereNot(columnOrCallback, operatorOrValue, value) {
+        if (typeof columnOrCallback === 'function') {
+            // Group negation
+            const subQuery = new QueryBuilder(this.model);
+            columnOrCallback(subQuery);
+            if (subQuery.conditions.length > 0) {
+                this.conditions.push({ operator: 'AND', type: 'raw', sql: 'NOT', bindings: [] });
+                this.conditions.push({ operator: 'AND', group: subQuery.conditions });
+            }
+        }
+        else {
+            // Simple column negation: whereNot('col', value) or whereNot('col', 'op', value)
+            if (value === undefined) {
+                // Two args: column, value -> use != operator
+                return this.where(columnOrCallback, '!=', operatorOrValue);
+            }
+            else {
+                // Three args: column, operator, value -> negate the operator
+                const negatedOp = this.negateOperator(operatorOrValue);
+                return this.where(columnOrCallback, negatedOp, value);
+            }
+        }
+        return this;
+    }
+    negateOperator(op) {
+        const negations = {
+            '=': '!=', '!=': '=', '<>': '=',
+            '<': '>=', '<=': '>', '>': '<=', '>=': '<',
+            'LIKE': 'NOT LIKE', 'NOT LIKE': 'LIKE',
+            'IN': 'NOT IN', 'NOT IN': 'IN'
+        };
+        return negations[op.toUpperCase()] || op;
+    }
+    // whereAny - match any of the given columns
+    whereAny(columns, operator, value) {
+        const conditions = columns.map(col => `${col} ${operator} ?`).join(' OR ');
+        const bindings = columns.map(() => value);
+        this.conditions.push({ operator: 'AND', type: 'raw', sql: `(${conditions})`, bindings });
+        return this;
+    }
+    // whereAll - match all of the given columns
+    whereAll(columns, operator, value) {
+        const conditions = columns.map(col => `${col} ${operator} ?`).join(' AND ');
+        const bindings = columns.map(() => value);
+        this.conditions.push({ operator: 'AND', type: 'raw', sql: `(${conditions})`, bindings });
+        return this;
+    }
+    // whereLike - case-sensitive LIKE
+    whereLike(column, value) {
+        return this.where(column, 'LIKE', value);
+    }
+    // whereNotLike
+    whereNotLike(column, value) {
+        return this.where(column, 'NOT LIKE', value);
+    }
+    // whereIntegerInRaw - for large arrays, uses raw SQL without bindings
+    whereIntegerInRaw(column, values) {
+        if (values.length === 0) {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: '0 = 1', bindings: [] });
+        }
+        else {
+            const list = values.map(v => parseInt(String(v), 10)).join(', ');
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `${column} IN (${list})`, bindings: [] });
+        }
+        return this;
+    }
+    whereIntegerNotInRaw(column, values) {
+        if (values.length === 0) {
+            return this; // No constraint needed
+        }
+        const list = values.map(v => parseInt(String(v), 10)).join(', ');
+        this.conditions.push({ operator: 'AND', type: 'raw', sql: `${column} NOT IN (${list})`, bindings: [] });
+        return this;
+    }
+    // reorder - clear existing orders and optionally set new one
+    reorder(column, direction = 'asc') {
+        this.orderByClauses = [];
+        if (column) {
+            this.orderBy(column, direction);
+        }
+        return this;
+    }
     selectRaw(sql, bindings) {
         this.ensureReadOnlySnippet(sql, 'selectRaw');
         this.selectColumns.push(sql);
@@ -323,14 +463,37 @@ class QueryBuilder {
         }
         return this;
     }
-    whereHas(relation, callback) {
-        const exists = this.buildHasSubquery(relation, callback);
-        this.whereRaw(`EXISTS (${exists.sql})`, exists.params);
+    unless(condition, callback, defaultCallback) {
+        if (!condition) {
+            callback(this);
+        }
+        else if (defaultCallback) {
+            defaultCallback(this);
+        }
         return this;
     }
-    orWhereHas(relation, callback) {
-        const exists = this.buildHasSubquery(relation, callback);
-        this.orWhereRaw(`EXISTS (${exists.sql})`, exists.params);
+    whereHas(relation, callback, operator, count) {
+        // If operator and count are provided, use HAVING COUNT comparison
+        if (operator !== undefined && count !== undefined) {
+            const countSubquery = this.buildCountSubquery(relation, callback);
+            this.whereRaw(`(${countSubquery.sql}) ${operator} ?`, [...countSubquery.params, count]);
+        }
+        else {
+            // Standard EXISTS check
+            const exists = this.buildHasSubquery(relation, callback);
+            this.whereRaw(`EXISTS (${exists.sql})`, exists.params);
+        }
+        return this;
+    }
+    orWhereHas(relation, callback, operator, count) {
+        if (operator !== undefined && count !== undefined) {
+            const countSubquery = this.buildCountSubquery(relation, callback);
+            this.orWhereRaw(`(${countSubquery.sql}) ${operator} ?`, [...countSubquery.params, count]);
+        }
+        else {
+            const exists = this.buildHasSubquery(relation, callback);
+            this.orWhereRaw(`EXISTS (${exists.sql})`, exists.params);
+        }
         return this;
     }
     doesntHave(relation, callback) {
@@ -340,6 +503,14 @@ class QueryBuilder {
     }
     whereDoesntHave(relation, callback) {
         return this.doesntHave(relation, callback);
+    }
+    orDoesntHave(relation, callback) {
+        const exists = this.buildHasSubquery(relation, callback);
+        this.orWhereRaw(`NOT EXISTS (${exists.sql})`, exists.params);
+        return this;
+    }
+    orWhereDoesntHave(relation, callback) {
+        return this.orDoesntHave(relation, callback);
     }
     whereBelongsTo(model, relation) {
         if (Array.isArray(model)) {
@@ -397,8 +568,19 @@ class QueryBuilder {
         const typeValue = Eloquent.getMorphTypeForModel(model.constructor);
         return this.where(typeColumn, typeValue).where(idColumn, model.id);
     }
-    has(relation) {
-        return this.whereHas(relation);
+    has(relation, operator = '>=', count = 1) {
+        // If using default operator and count of 1, use EXISTS for efficiency
+        if (operator === '>=' && count === 1) {
+            return this.whereHas(relation);
+        }
+        // Otherwise use count comparison
+        return this.whereHas(relation, undefined, operator, count);
+    }
+    orHas(relation, operator = '>=', count = 1) {
+        if (operator === '>=' && count === 1) {
+            return this.orWhereHas(relation);
+        }
+        return this.orWhereHas(relation, undefined, operator, count);
     }
     withCount(relations) {
         const list = [];
@@ -705,14 +887,30 @@ class QueryBuilder {
         const currentModel = model || this.model;
         // Debug logging
         this.debugLog('Loading relations', { instanceCount: instances.length, relations, model: currentModel.name });
+        // Group relations by their top-level key to avoid loading the same relation multiple times
+        // e.g., ['posts.tags', 'posts.comments'] becomes { posts: ['tags', 'comments'] }
+        const groupedRelations = new Map();
         for (const relation of relations) {
             const parts = relation.split('.');
             const relationKey = parts[0];
+            if (!groupedRelations.has(relationKey)) {
+                groupedRelations.set(relationKey, []);
+            }
+            if (parts.length > 1) {
+                groupedRelations.get(relationKey).push(parts.slice(1).join('.'));
+            }
+        }
+        // Process each unique top-level relation once
+        for (const [relationKey, subRelations] of groupedRelations) {
             const fullPath = prefix ? `${prefix}.${relationKey}` : relationKey;
             const cfg = Eloquent.getRelationConfig(currentModel, relationKey);
-            await this.loadSingleRelation(instances, relationKey, currentModel, fullPath);
-            if (parts.length > 1) {
-                const subRelations = [parts.slice(1).join('.')];
+            // Only load if not already loaded on instances (check if the data is stored as own property)
+            const needsLoad = instances.some(inst => !Object.prototype.hasOwnProperty.call(inst, relationKey));
+            if (needsLoad) {
+                await this.loadSingleRelation(instances, relationKey, currentModel, fullPath);
+            }
+            // If there are nested relations to load
+            if (subRelations.length > 0) {
                 const relValues = instances
                     .map(inst => inst[relationKey])
                     .filter((v) => v !== null && v !== undefined);
@@ -1374,8 +1572,10 @@ class QueryBuilder {
         return { sql, params };
     }
     async first() {
-        if (!Eloquent.connection)
+        // Check for Sushi first - no database needed
+        if (!this.model.usesSushi() && !Eloquent.connection) {
             throw new Error('Database connection not initialized');
+        }
         const one = this.clone().limit(1);
         const rows = await one.get();
         const result = rows[0];
@@ -1390,6 +1590,76 @@ class QueryBuilder {
             throw new Error('No results found for query');
         }
         return result;
+    }
+    async firstOr(defaultValue) {
+        const result = await this.first();
+        if (result) {
+            return result;
+        }
+        return typeof defaultValue === 'function' ? defaultValue() : defaultValue;
+    }
+    toSql() {
+        const { sql } = this.buildSelectSql({ includeOrderLimit: true });
+        return sql;
+    }
+    toRawSql() {
+        const { sql, params } = this.buildSelectSql({ includeOrderLimit: true });
+        let rawSql = sql;
+        for (const param of params) {
+            const value = typeof param === 'string' ? `'${param}'` : param;
+            rawSql = rawSql.replace('?', String(value));
+        }
+        return rawSql;
+    }
+    dump() {
+        console.log('SQL:', this.toSql());
+        console.log('Raw SQL:', this.toRawSql());
+        return this;
+    }
+    dd() {
+        this.dump();
+        process.exit(1);
+        throw new Error('Unreachable');
+    }
+    whereColumn(first, operatorOrSecond, second) {
+        if (second === undefined) {
+            // Two arguments: column1, column2 (equals)
+            this.conditions.push({
+                operator: 'AND',
+                type: 'raw',
+                sql: `${first} = ${operatorOrSecond}`,
+                bindings: []
+            });
+        }
+        else {
+            // Three arguments: column1, operator, column2
+            this.conditions.push({
+                operator: 'AND',
+                type: 'raw',
+                sql: `${first} ${operatorOrSecond} ${second}`,
+                bindings: []
+            });
+        }
+        return this;
+    }
+    orWhereColumn(first, operatorOrSecond, second) {
+        if (second === undefined) {
+            this.conditions.push({
+                operator: 'OR',
+                type: 'raw',
+                sql: `${first} = ${operatorOrSecond}`,
+                bindings: []
+            });
+        }
+        else {
+            this.conditions.push({
+                operator: 'OR',
+                type: 'raw',
+                sql: `${first} ${operatorOrSecond} ${second}`,
+                bindings: []
+            });
+        }
+        return this;
     }
     async get() {
         // Check if model uses Sushi (in-memory array data)
@@ -1488,11 +1758,39 @@ class QueryBuilder {
         return collection;
     }
     /**
+     * Execute aggregate function against Sushi (in-memory array) data
+     */
+    async aggregateSushi(functionName, column) {
+        const fetchedRows = await this.model.getRows();
+        let rows = [...fetchedRows];
+        // Apply conditions (filter)
+        rows = this.applySushiConditions(rows, this.conditions);
+        if (rows.length === 0) {
+            return functionName === 'COUNT' ? 0 : 0;
+        }
+        switch (functionName) {
+            case 'COUNT':
+                return column === '*' ? rows.length : rows.filter(r => r[column] !== null && r[column] !== undefined).length;
+            case 'SUM':
+                return rows.reduce((sum, r) => sum + (Number(r[column]) || 0), 0);
+            case 'AVG':
+                const values = rows.map(r => Number(r[column]) || 0);
+                return values.reduce((a, b) => a + b, 0) / values.length;
+            case 'MAX':
+                return Math.max(...rows.map(r => Number(r[column]) || 0));
+            case 'MIN':
+                return Math.min(...rows.map(r => Number(r[column]) || 0));
+            default:
+                return 0;
+        }
+    }
+    /**
      * Execute query against Sushi (in-memory array) data
      * Supports: where, whereIn, whereNull, orderBy, limit, offset
      */
     async getSushi() {
-        let rows = [...this.model.getRows()];
+        const fetchedRows = await this.model.getRows();
+        let rows = [...fetchedRows];
         this.debugLog('Executing Sushi query', {
             model: this.model.name,
             totalRows: rows.length,
@@ -1786,11 +2084,53 @@ class QueryBuilder {
             accessorCache.set(prop, null);
             return null;
         };
+        // Track loading promises per relation
+        const loadingPromises = new Map();
         return new Proxy(instance, {
             get: (target, prop) => {
-                // If it's a relationship and not loaded, check for auto-loading
-                if (relationConfigs.has(prop) && !(prop in target) && this.shouldAutoLoad(target, prop)) {
-                    this.autoLoadRelation(target, prop);
+                // Check if this is a relationship
+                if (relationConfigs.has(prop)) {
+                    // Check if the relation data has been loaded (stored as own property on instance)
+                    const hasLoadedData = Object.prototype.hasOwnProperty.call(target, prop);
+                    if (hasLoadedData) {
+                        // Return the loaded relation data
+                        return target[prop];
+                    }
+                    // Check for auto-loading
+                    if (this.shouldAutoLoad(target, prop)) {
+                        // Start loading if not already loading
+                        if (!loadingPromises.has(prop)) {
+                            const loadPromise = this.autoLoadRelation(target, prop);
+                            loadingPromises.set(prop, loadPromise);
+                        }
+                        // Return a thenable proxy that:
+                        // 1. Can be awaited: await user.posts
+                        // 2. Acts like the relation for chaining: user.posts().where(...)
+                        const relationMethod = target[prop].bind(target);
+                        const loadPromise = loadingPromises.get(prop);
+                        // Create a thenable that resolves to the loaded data
+                        const thenable = Object.assign(function (...args) {
+                            // Allow calling as method for chaining
+                            return relationMethod(...args);
+                        }, {
+                            then: (resolve, reject) => {
+                                return loadPromise
+                                    .then(() => {
+                                    // After load, return the data from the instance
+                                    const data = target[prop];
+                                    resolve(data);
+                                })
+                                    .catch(reject);
+                            },
+                            catch: (reject) => {
+                                return loadPromise.catch(reject);
+                            }
+                        });
+                        return thenable;
+                    }
+                    // Return the relation method for chainable queries
+                    // User can call user.posts().get() for explicit loading
+                    return target[prop];
                 }
                 // Check for Laravel-style accessor (getXxxAttribute)
                 // Only if prop is not already defined on target (allows native getters to take precedence)
@@ -1812,8 +2152,12 @@ class QueryBuilder {
     }
     async autoLoadRelation(instance, relationName) {
         const collection = instance.__collection;
-        if (collection && collection.isRelationshipAutoloadingEnabled()) {
-            // Load for the entire collection
+        const globalEnabled = Eloquent.automaticallyEagerLoadRelationshipsEnabled;
+        // Check if we should load for the entire collection
+        const shouldLoadCollection = collection && (globalEnabled ||
+            (typeof collection.isRelationshipAutoloadingEnabled === 'function' && collection.isRelationshipAutoloadingEnabled()));
+        if (shouldLoadCollection) {
+            // Load for the entire collection (batch load - prevents N+1)
             await this.loadRelations(collection, [relationName]);
         }
         else {
@@ -1898,14 +2242,23 @@ class ThroughBuilder {
 class Eloquent {
     /**
      * Check if this model uses Sushi (in-memory array data)
+     * Override this method to return true for API-based Sushi models
      */
     static usesSushi() {
-        return Array.isArray(this.rows);
+        // Check if model has static rows array
+        if (Array.isArray(this.rows)) {
+            return true;
+        }
+        // Check if model has overridden getRows (not the base Eloquent.getRows)
+        const hasOwnGetRows = Object.prototype.hasOwnProperty.call(this, 'getRows') ||
+            (this.getRows !== Eloquent.getRows);
+        return hasOwnGetRows;
     }
     /**
-     * Get the Sushi rows for this model
+     * Get the Sushi rows for this model (async - can fetch from API)
+     * Override this method to fetch data from an API or other async source
      */
-    static getRows() {
+    static async getRows() {
         return this.rows || [];
     }
     static automaticallyEagerLoadRelationships() {

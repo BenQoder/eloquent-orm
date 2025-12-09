@@ -83,6 +83,7 @@ declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith ex
     find<TExplicit>(id: any): Promise<TExplicit | null>;
     findOrFail<TExplicit = WithRelations<InstanceType<M>, TWith>>(id: any): Promise<TExplicit>;
     findOrFail<TExplicit>(id: any): Promise<TExplicit>;
+    findOr<TExplicit = WithRelations<InstanceType<M>, TWith>, TDefault = TExplicit>(id: any, defaultValue: TDefault | (() => TDefault)): Promise<TExplicit | TDefault>;
     private aggregate;
     where(column: string, value: any): this;
     where(column: string, operator: string, value: any): this;
@@ -102,21 +103,39 @@ declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith ex
     whereNotBetween(column: string, values: [any, any]): this;
     orWhereBetween(column: string, values: [any, any]): this;
     orWhereNotBetween(column: string, values: [any, any]): this;
+    whereDate(column: string, operatorOrValue: string, value?: string): this;
+    whereMonth(column: string, operatorOrValue: string | number, value?: string | number): this;
+    whereYear(column: string, operatorOrValue: string | number, value?: string | number): this;
+    whereDay(column: string, operatorOrValue: string | number, value?: string | number): this;
+    whereTime(column: string, operatorOrValue: string, value?: string): this;
+    whereNot(columnOrCallback: string | ((query: this) => void), operatorOrValue?: any, value?: any): this;
+    private negateOperator;
+    whereAny(columns: string[], operator: string, value: any): this;
+    whereAll(columns: string[], operator: string, value: any): this;
+    whereLike(column: string, value: string): this;
+    whereNotLike(column: string, value: string): this;
+    whereIntegerInRaw(column: string, values: number[]): this;
+    whereIntegerNotInRaw(column: string, values: number[]): this;
+    reorder(column?: string, direction?: 'asc' | 'desc'): this;
     selectRaw(sql: string, bindings?: any[]): this;
     whereRaw(sql: string, bindings?: any[]): this;
     orWhereRaw(sql: string, bindings?: any[]): this;
     when(condition: any, callback: (query: this) => void, defaultCallback?: (query: this) => void): this;
-    whereHas(relation: string, callback?: (query: QueryBuilder) => void): this;
-    orWhereHas(relation: string, callback?: (query: QueryBuilder) => void): this;
+    unless(condition: any, callback: (query: this) => void, defaultCallback?: (query: this) => void): this;
+    whereHas(relation: string, callback?: (query: QueryBuilder) => void, operator?: string, count?: number): this;
+    orWhereHas(relation: string, callback?: (query: QueryBuilder) => void, operator?: string, count?: number): this;
     doesntHave(relation: string, callback?: (query: QueryBuilder) => void): this;
     whereDoesntHave(relation: string, callback?: (query: QueryBuilder) => void): this;
+    orDoesntHave(relation: string, callback?: (query: QueryBuilder) => void): this;
+    orWhereDoesntHave(relation: string, callback?: (query: QueryBuilder) => void): this;
     whereBelongsTo(model: any | any[], relation?: string): this;
     private getBelongsToForeignKey;
     whereRelation(relation: string, callback?: (query: QueryBuilder) => void): this;
     orWhereRelation(relation: string, callback?: (query: QueryBuilder) => void): this;
     whereHasMorph(relation: string, modelType: string | typeof Eloquent, callback?: (query: QueryBuilder) => void): this;
     whereMorphedTo(relation: string, model: any): this;
-    has(relation: string): this;
+    has(relation: string, operator?: string, count?: number): this;
+    orHas(relation: string, operator?: string, count?: number): this;
     withCount(relations: string | string[] | Record<string, (query: QueryBuilder) => void>): this;
     private buildCountSubquery;
     private buildHasSubquery;
@@ -147,8 +166,19 @@ declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith ex
     first<TExplicit>(): Promise<TExplicit | null>;
     firstOrFail<TExplicit = WithRelations<InstanceType<M>, TWith>>(): Promise<TExplicit>;
     firstOrFail<TExplicit>(): Promise<TExplicit>;
+    firstOr<TExplicit = WithRelations<InstanceType<M>, TWith>, TDefault = TExplicit>(defaultValue: TDefault | (() => TDefault)): Promise<TExplicit | TDefault>;
+    toSql(): string;
+    toRawSql(): string;
+    dump(): this;
+    dd(): never;
+    whereColumn(first: string, operatorOrSecond: string, second?: string): this;
+    orWhereColumn(first: string, operatorOrSecond: string, second?: string): this;
     get<TExplicit extends InstanceType<M> & Record<string, any> = WithRelations<InstanceType<M>, TWith>>(): Promise<Collection<TExplicit>>;
     get<TExplicit extends InstanceType<M> & Record<string, any>>(): Promise<Collection<TExplicit>>;
+    /**
+     * Execute aggregate function against Sushi (in-memory array) data
+     */
+    private aggregateSushi;
     /**
      * Execute query against Sushi (in-memory array) data
      * Supports: where, whereIn, whereNull, orderBy, limit, offset
@@ -195,12 +225,14 @@ declare class Eloquent {
     protected static rows?: Record<string, any>[];
     /**
      * Check if this model uses Sushi (in-memory array data)
+     * Override this method to return true for API-based Sushi models
      */
     static usesSushi(): boolean;
     /**
-     * Get the Sushi rows for this model
+     * Get the Sushi rows for this model (async - can fetch from API)
+     * Override this method to fetch data from an API or other async source
      */
-    static getRows(): Record<string, any>[];
+    static getRows(): Promise<Record<string, any>[]>;
     static debugEnabled: boolean;
     static debugLogger: (message: string, data?: any) => void;
     static automaticallyEagerLoadRelationships(): void;

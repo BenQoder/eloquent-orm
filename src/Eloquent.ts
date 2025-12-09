@@ -1742,6 +1742,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
     dd(): never {
         this.dump();
         process.exit(1);
+        throw new Error('Unreachable');
     }
 
     whereColumn(first: string, operatorOrSecond: string, second?: string): this {
