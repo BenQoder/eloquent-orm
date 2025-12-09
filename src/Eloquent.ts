@@ -300,6 +300,17 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         return result as TExplicit;
     }
 
+    async findOr<TExplicit = WithRelations<InstanceType<M>, TWith>, TDefault = TExplicit>(
+        id: any,
+        defaultValue: TDefault | (() => TDefault)
+    ): Promise<TExplicit | TDefault> {
+        const result = await this.find(id);
+        if (result) {
+            return result as TExplicit;
+        }
+        return typeof defaultValue === 'function' ? (defaultValue as () => TDefault)() : defaultValue;
+    }
+
     // Removed write operations (insert, insertGetId, update, delete) to keep ORM read-only
 
     private async aggregate(functionName: string, column: string): Promise<any> {
@@ -460,6 +471,141 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         return this;
     }
 
+    // Date-based where clauses
+    whereDate(column: string, operatorOrValue: string, value?: string): this {
+        if (value === undefined) {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `DATE(${column}) = ?`, bindings: [operatorOrValue] });
+        } else {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `DATE(${column}) ${operatorOrValue} ?`, bindings: [value] });
+        }
+        return this;
+    }
+
+    whereMonth(column: string, operatorOrValue: string | number, value?: string | number): this {
+        if (value === undefined) {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `MONTH(${column}) = ?`, bindings: [operatorOrValue] });
+        } else {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `MONTH(${column}) ${operatorOrValue} ?`, bindings: [value] });
+        }
+        return this;
+    }
+
+    whereYear(column: string, operatorOrValue: string | number, value?: string | number): this {
+        if (value === undefined) {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `YEAR(${column}) = ?`, bindings: [operatorOrValue] });
+        } else {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `YEAR(${column}) ${operatorOrValue} ?`, bindings: [value] });
+        }
+        return this;
+    }
+
+    whereDay(column: string, operatorOrValue: string | number, value?: string | number): this {
+        if (value === undefined) {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `DAY(${column}) = ?`, bindings: [operatorOrValue] });
+        } else {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `DAY(${column}) ${operatorOrValue} ?`, bindings: [value] });
+        }
+        return this;
+    }
+
+    whereTime(column: string, operatorOrValue: string, value?: string): this {
+        if (value === undefined) {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `TIME(${column}) = ?`, bindings: [operatorOrValue] });
+        } else {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `TIME(${column}) ${operatorOrValue} ?`, bindings: [value] });
+        }
+        return this;
+    }
+
+    // whereNot - negate a condition or group
+    whereNot(columnOrCallback: string | ((query: this) => void), operatorOrValue?: any, value?: any): this {
+        if (typeof columnOrCallback === 'function') {
+            // Group negation
+            const subQuery = new QueryBuilder<M>(this.model);
+            columnOrCallback(subQuery as any);
+            if (subQuery.conditions.length > 0) {
+                this.conditions.push({ operator: 'AND', type: 'raw', sql: 'NOT', bindings: [] });
+                this.conditions.push({ operator: 'AND', group: subQuery.conditions });
+            }
+        } else {
+            // Simple column negation: whereNot('col', value) or whereNot('col', 'op', value)
+            if (value === undefined) {
+                // Two args: column, value -> use != operator
+                return this.where(columnOrCallback, '!=', operatorOrValue);
+            } else {
+                // Three args: column, operator, value -> negate the operator
+                const negatedOp = this.negateOperator(operatorOrValue);
+                return this.where(columnOrCallback, negatedOp, value);
+            }
+        }
+        return this;
+    }
+
+    private negateOperator(op: string): string {
+        const negations: Record<string, string> = {
+            '=': '!=', '!=': '=', '<>': '=',
+            '<': '>=', '<=': '>', '>': '<=', '>=': '<',
+            'LIKE': 'NOT LIKE', 'NOT LIKE': 'LIKE',
+            'IN': 'NOT IN', 'NOT IN': 'IN'
+        };
+        return negations[op.toUpperCase()] || op;
+    }
+
+    // whereAny - match any of the given columns
+    whereAny(columns: string[], operator: string, value: any): this {
+        const conditions = columns.map(col => `${col} ${operator} ?`).join(' OR ');
+        const bindings = columns.map(() => value);
+        this.conditions.push({ operator: 'AND', type: 'raw', sql: `(${conditions})`, bindings });
+        return this;
+    }
+
+    // whereAll - match all of the given columns
+    whereAll(columns: string[], operator: string, value: any): this {
+        const conditions = columns.map(col => `${col} ${operator} ?`).join(' AND ');
+        const bindings = columns.map(() => value);
+        this.conditions.push({ operator: 'AND', type: 'raw', sql: `(${conditions})`, bindings });
+        return this;
+    }
+
+    // whereLike - case-sensitive LIKE
+    whereLike(column: string, value: string): this {
+        return this.where(column, 'LIKE', value);
+    }
+
+    // whereNotLike
+    whereNotLike(column: string, value: string): this {
+        return this.where(column, 'NOT LIKE', value);
+    }
+
+    // whereIntegerInRaw - for large arrays, uses raw SQL without bindings
+    whereIntegerInRaw(column: string, values: number[]): this {
+        if (values.length === 0) {
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: '0 = 1', bindings: [] });
+        } else {
+            const list = values.map(v => parseInt(String(v), 10)).join(', ');
+            this.conditions.push({ operator: 'AND', type: 'raw', sql: `${column} IN (${list})`, bindings: [] });
+        }
+        return this;
+    }
+
+    whereIntegerNotInRaw(column: string, values: number[]): this {
+        if (values.length === 0) {
+            return this; // No constraint needed
+        }
+        const list = values.map(v => parseInt(String(v), 10)).join(', ');
+        this.conditions.push({ operator: 'AND', type: 'raw', sql: `${column} NOT IN (${list})`, bindings: [] });
+        return this;
+    }
+
+    // reorder - clear existing orders and optionally set new one
+    reorder(column?: string, direction: 'asc' | 'desc' = 'asc'): this {
+        this.orderByClauses = [];
+        if (column) {
+            this.orderBy(column, direction);
+        }
+        return this;
+    }
+
     selectRaw(sql: string, bindings?: any[]): this {
         this.ensureReadOnlySnippet(sql, 'selectRaw');
         this.selectColumns.push(sql);
@@ -488,15 +634,36 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         return this;
     }
 
-    whereHas(relation: string, callback?: (query: QueryBuilder) => void): this {
-        const exists = this.buildHasSubquery(relation, callback);
-        this.whereRaw(`EXISTS (${exists.sql})`, exists.params);
+    unless(condition: any, callback: (query: this) => void, defaultCallback?: (query: this) => void): this {
+        if (!condition) {
+            callback(this);
+        } else if (defaultCallback) {
+            defaultCallback(this);
+        }
         return this;
     }
 
-    orWhereHas(relation: string, callback?: (query: QueryBuilder) => void): this {
-        const exists = this.buildHasSubquery(relation, callback);
-        this.orWhereRaw(`EXISTS (${exists.sql})`, exists.params);
+    whereHas(relation: string, callback?: (query: QueryBuilder) => void, operator?: string, count?: number): this {
+        // If operator and count are provided, use HAVING COUNT comparison
+        if (operator !== undefined && count !== undefined) {
+            const countSubquery = this.buildCountSubquery(relation, callback);
+            this.whereRaw(`(${countSubquery.sql}) ${operator} ?`, [...countSubquery.params, count]);
+        } else {
+            // Standard EXISTS check
+            const exists = this.buildHasSubquery(relation, callback);
+            this.whereRaw(`EXISTS (${exists.sql})`, exists.params);
+        }
+        return this;
+    }
+
+    orWhereHas(relation: string, callback?: (query: QueryBuilder) => void, operator?: string, count?: number): this {
+        if (operator !== undefined && count !== undefined) {
+            const countSubquery = this.buildCountSubquery(relation, callback);
+            this.orWhereRaw(`(${countSubquery.sql}) ${operator} ?`, [...countSubquery.params, count]);
+        } else {
+            const exists = this.buildHasSubquery(relation, callback);
+            this.orWhereRaw(`EXISTS (${exists.sql})`, exists.params);
+        }
         return this;
     }
 
@@ -508,6 +675,16 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
 
     whereDoesntHave(relation: string, callback?: (query: QueryBuilder) => void): this {
         return this.doesntHave(relation, callback);
+    }
+
+    orDoesntHave(relation: string, callback?: (query: QueryBuilder) => void): this {
+        const exists = this.buildHasSubquery(relation, callback);
+        this.orWhereRaw(`NOT EXISTS (${exists.sql})`, exists.params);
+        return this;
+    }
+
+    orWhereDoesntHave(relation: string, callback?: (query: QueryBuilder) => void): this {
+        return this.orDoesntHave(relation, callback);
     }
 
     whereBelongsTo(model: any | any[], relation?: string): this {
@@ -573,8 +750,20 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         return this.where(typeColumn, typeValue).where(idColumn, model.id);
     }
 
-    has(relation: string): this {
-        return this.whereHas(relation);
+    has(relation: string, operator: string = '>=', count: number = 1): this {
+        // If using default operator and count of 1, use EXISTS for efficiency
+        if (operator === '>=' && count === 1) {
+            return this.whereHas(relation);
+        }
+        // Otherwise use count comparison
+        return this.whereHas(relation, undefined, operator, count);
+    }
+
+    orHas(relation: string, operator: string = '>=', count: number = 1): this {
+        if (operator === '>=' && count === 1) {
+            return this.orWhereHas(relation);
+        }
+        return this.orWhereHas(relation, undefined, operator, count);
     }
 
     withCount(relations: string | string[] | Record<string, (query: QueryBuilder) => void>): this {
@@ -886,14 +1075,34 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
 
         // Debug logging
         this.debugLog('Loading relations', { instanceCount: instances.length, relations, model: currentModel.name });
+
+        // Group relations by their top-level key to avoid loading the same relation multiple times
+        // e.g., ['posts.tags', 'posts.comments'] becomes { posts: ['tags', 'comments'] }
+        const groupedRelations = new Map<string, string[]>();
         for (const relation of relations) {
             const parts = relation.split('.');
             const relationKey = parts[0];
+            if (!groupedRelations.has(relationKey)) {
+                groupedRelations.set(relationKey, []);
+            }
+            if (parts.length > 1) {
+                groupedRelations.get(relationKey)!.push(parts.slice(1).join('.'));
+            }
+        }
+
+        // Process each unique top-level relation once
+        for (const [relationKey, subRelations] of groupedRelations) {
             const fullPath = prefix ? `${prefix}.${relationKey}` : relationKey;
             const cfg = (Eloquent as any).getRelationConfig(currentModel, relationKey);
-            await this.loadSingleRelation(instances, relationKey, currentModel, fullPath);
-            if (parts.length > 1) {
-                const subRelations = [parts.slice(1).join('.')];
+
+            // Only load if not already loaded on instances (check if the data is stored as own property)
+            const needsLoad = instances.some(inst => !Object.prototype.hasOwnProperty.call(inst, relationKey));
+            if (needsLoad) {
+                await this.loadSingleRelation(instances, relationKey, currentModel, fullPath);
+            }
+
+            // If there are nested relations to load
+            if (subRelations.length > 0) {
                 const relValues = instances
                     .map(inst => (inst as any)[relationKey])
                     .filter((v: any) => v !== null && v !== undefined);
@@ -1499,6 +1708,82 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         return result as TExplicit;
     }
 
+    async firstOr<TExplicit = WithRelations<InstanceType<M>, TWith>, TDefault = TExplicit>(
+        defaultValue: TDefault | (() => TDefault)
+    ): Promise<TExplicit | TDefault> {
+        const result = await this.first();
+        if (result) {
+            return result as TExplicit;
+        }
+        return typeof defaultValue === 'function' ? (defaultValue as () => TDefault)() : defaultValue;
+    }
+
+    toSql(): string {
+        const { sql } = this.buildSelectSql({ includeOrderLimit: true });
+        return sql;
+    }
+
+    toRawSql(): string {
+        const { sql, params } = this.buildSelectSql({ includeOrderLimit: true });
+        let rawSql = sql;
+        for (const param of params) {
+            const value = typeof param === 'string' ? `'${param}'` : param;
+            rawSql = rawSql.replace('?', String(value));
+        }
+        return rawSql;
+    }
+
+    dump(): this {
+        console.log('SQL:', this.toSql());
+        console.log('Raw SQL:', this.toRawSql());
+        return this;
+    }
+
+    dd(): never {
+        this.dump();
+        process.exit(1);
+    }
+
+    whereColumn(first: string, operatorOrSecond: string, second?: string): this {
+        if (second === undefined) {
+            // Two arguments: column1, column2 (equals)
+            this.conditions.push({
+                operator: 'AND',
+                type: 'raw',
+                sql: `${first} = ${operatorOrSecond}`,
+                bindings: []
+            });
+        } else {
+            // Three arguments: column1, operator, column2
+            this.conditions.push({
+                operator: 'AND',
+                type: 'raw',
+                sql: `${first} ${operatorOrSecond} ${second}`,
+                bindings: []
+            });
+        }
+        return this;
+    }
+
+    orWhereColumn(first: string, operatorOrSecond: string, second?: string): this {
+        if (second === undefined) {
+            this.conditions.push({
+                operator: 'OR',
+                type: 'raw',
+                sql: `${first} = ${operatorOrSecond}`,
+                bindings: []
+            });
+        } else {
+            this.conditions.push({
+                operator: 'OR',
+                type: 'raw',
+                sql: `${first} ${operatorOrSecond} ${second}`,
+                bindings: []
+            });
+        }
+        return this;
+    }
+
     async get<TExplicit extends InstanceType<M> & Record<string, any> = WithRelations<InstanceType<M>, TWith>>(): Promise<Collection<TExplicit>>;
     async get<TExplicit extends InstanceType<M> & Record<string, any>>(): Promise<Collection<TExplicit>>;
     async get<TExplicit extends InstanceType<M> & Record<string, any> = WithRelations<InstanceType<M>, TWith>>(): Promise<Collection<TExplicit>> {
@@ -1950,11 +2235,63 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             return null;
         };
 
+        // Track loading promises per relation
+        const loadingPromises = new Map<string, Promise<any>>();
+
         return new Proxy(instance, {
             get: (target, prop: string) => {
-                // If it's a relationship and not loaded, check for auto-loading
-                if (relationConfigs.has(prop) && !(prop in target) && this.shouldAutoLoad(target, prop)) {
-                    this.autoLoadRelation(target, prop);
+                // Check if this is a relationship
+                if (relationConfigs.has(prop)) {
+                    // Check if the relation data has been loaded (stored as own property on instance)
+                    const hasLoadedData = Object.prototype.hasOwnProperty.call(target, prop);
+
+                    if (hasLoadedData) {
+                        // Return the loaded relation data
+                        return (target as any)[prop];
+                    }
+
+                    // Check for auto-loading
+                    if (this.shouldAutoLoad(target, prop)) {
+                        // Start loading if not already loading
+                        if (!loadingPromises.has(prop)) {
+                            const loadPromise = this.autoLoadRelation(target, prop);
+                            loadingPromises.set(prop, loadPromise);
+                        }
+
+                        // Return a thenable proxy that:
+                        // 1. Can be awaited: await user.posts
+                        // 2. Acts like the relation for chaining: user.posts().where(...)
+                        const relationMethod = (target as any)[prop].bind(target);
+                        const loadPromise = loadingPromises.get(prop)!;
+
+                        // Create a thenable that resolves to the loaded data
+                        const thenable = Object.assign(
+                            function(...args: any[]) {
+                                // Allow calling as method for chaining
+                                return relationMethod(...args);
+                            },
+                            {
+                                then: (resolve: (value: any) => void, reject?: (reason: any) => void) => {
+                                    return loadPromise
+                                        .then(() => {
+                                            // After load, return the data from the instance
+                                            const data = (target as any)[prop];
+                                            resolve(data);
+                                        })
+                                        .catch(reject);
+                                },
+                                catch: (reject: (reason: any) => void) => {
+                                    return loadPromise.catch(reject);
+                                }
+                            }
+                        );
+
+                        return thenable;
+                    }
+
+                    // Return the relation method for chainable queries
+                    // User can call user.posts().get() for explicit loading
+                    return (target as any)[prop];
                 }
 
                 // Check for Laravel-style accessor (getXxxAttribute)
@@ -1980,8 +2317,16 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
 
     private async autoLoadRelation(instance: Eloquent, relationName: string) {
         const collection = (instance as any).__collection;
-        if (collection && collection.isRelationshipAutoloadingEnabled()) {
-            // Load for the entire collection
+        const globalEnabled = (Eloquent as any).automaticallyEagerLoadRelationshipsEnabled;
+
+        // Check if we should load for the entire collection
+        const shouldLoadCollection = collection && (
+            globalEnabled ||
+            (typeof collection.isRelationshipAutoloadingEnabled === 'function' && collection.isRelationshipAutoloadingEnabled())
+        );
+
+        if (shouldLoadCollection) {
+            // Load for the entire collection (batch load - prevents N+1)
             await this.loadRelations(collection, [relationName]);
         } else {
             // Load for just this instance

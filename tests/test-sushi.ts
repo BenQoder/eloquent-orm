@@ -1,4 +1,4 @@
-import { Eloquent } from './src';
+import { Eloquent } from '../src';
 
 // ============================================
 // Sushi Models (in-memory array data)
