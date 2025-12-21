@@ -872,21 +872,23 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         const idColumn = cfg.idColumn || `${cfg.morphName}_id`;
         const parentTable = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
 
-        // Resolve morph types to strings
-        const typeStrings = morphTypes.map(t =>
-            typeof t === 'string' ? t : Eloquent.getMorphTypeForModel(t)
-        );
+        // Build array of { morphType: string, model: typeof Eloquent }
+        const resolvedTypes = morphTypes.map(t => {
+            if (typeof t === 'string') {
+                const model = Eloquent.getModelForMorphType(t);
+                if (!model) {
+                    throw new Error(`Cannot resolve model for morph type '${t}'`);
+                }
+                return { morphType: t, model };
+            } else {
+                return { morphType: Eloquent.getMorphTypeForModel(t), model: t };
+            }
+        });
 
         const allParts: string[] = [];
         const allParams: any[] = [];
 
-        for (const morphType of typeStrings) {
-            // Get the related model for this morph type
-            const RelatedModel = Eloquent.getModelForMorphType(morphType);
-            if (!RelatedModel) {
-                throw new Error(`Cannot resolve model for morph type '${morphType}'`);
-            }
-
+        for (const { morphType, model: RelatedModel } of resolvedTypes) {
             const relatedTable = (RelatedModel as any).table || RelatedModel.name.toLowerCase() + 's';
 
             // Build subquery for this type
