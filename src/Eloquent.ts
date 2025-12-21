@@ -722,20 +722,25 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         return this.orWhereHas(relation, callback);
     }
 
-    whereHasMorph(relation: string, modelType: string | typeof Eloquent, callback?: (query: QueryBuilder) => void): this {
-        const cfg = (Eloquent as any).getRelationConfig(this.model, relation);
-        if (!cfg || (cfg.type !== 'morphMany' && cfg.type !== 'morphOne')) {
-            throw new Error(`Relation '${relation}' is not a morph relationship`);
-        }
-        const typeValue = typeof modelType === 'string' ? modelType : Eloquent.getMorphTypeForModel(modelType);
-        const exists = this.buildHasSubquery(relation, callback);
-        // Modify the subquery to filter by morph type
-        const typeColumn = cfg.typeColumn || `${cfg.morphName}_type`;
-        const modifiedSql = exists.sql.replace(
-            `FROM ${cfg.model.name.toLowerCase()}s`,
-            `FROM ${cfg.model.name.toLowerCase()}s WHERE ${cfg.model.name.toLowerCase()}s.${typeColumn} = ?`
-        );
-        this.whereRaw(`EXISTS (${modifiedSql})`, [typeValue, ...exists.params]);
+    whereHasMorph(
+        relation: string,
+        types: string | typeof Eloquent | (string | typeof Eloquent)[],
+        callback?: (query: QueryBuilder) => void
+    ): this {
+        const typeArray = Array.isArray(types) ? types : [types];
+        const subquery = this.buildHasMorphSubquery(relation, typeArray, callback);
+        this.whereRaw(`(${subquery.sql})`, subquery.params);
+        return this;
+    }
+
+    orWhereHasMorph(
+        relation: string,
+        types: string | typeof Eloquent | (string | typeof Eloquent)[],
+        callback?: (query: QueryBuilder) => void
+    ): this {
+        const typeArray = Array.isArray(types) ? types : [types];
+        const subquery = this.buildHasMorphSubquery(relation, typeArray, callback);
+        this.orWhereRaw(`(${subquery.sql})`, subquery.params);
         return this;
     }
 
@@ -851,6 +856,76 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         const sql = `SELECT 1 FROM ${relatedTable} WHERE ${parts.join(' AND ')}${whereSql}`;
         params.push(...where.params);
         return { sql, params };
+    }
+
+    private buildHasMorphSubquery(
+        relationName: string,
+        morphTypes: (string | typeof Eloquent)[],
+        callback?: (query: QueryBuilder) => void
+    ): { sql: string; params: any[] } {
+        const cfg = (Eloquent as any).getRelationConfig(this.model, relationName);
+        if (!cfg || cfg.type !== 'morphTo') {
+            throw new Error(`Relation '${relationName}' must be a morphTo relationship`);
+        }
+
+        const typeColumn = cfg.typeColumn || `${cfg.morphName}_type`;
+        const idColumn = cfg.idColumn || `${cfg.morphName}_id`;
+        const parentTable = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
+
+        // Resolve morph types to strings
+        const typeStrings = morphTypes.map(t =>
+            typeof t === 'string' ? t : Eloquent.getMorphTypeForModel(t)
+        );
+
+        const allParts: string[] = [];
+        const allParams: any[] = [];
+
+        for (const morphType of typeStrings) {
+            // Get the related model for this morph type
+            const RelatedModel = Eloquent.getModelForMorphType(morphType);
+            if (!RelatedModel) {
+                throw new Error(`Cannot resolve model for morph type '${morphType}'`);
+            }
+
+            const relatedTable = (RelatedModel as any).table || RelatedModel.name.toLowerCase() + 's';
+
+            // Build subquery for this type
+            const relQB = RelatedModel.query();
+            if (callback) callback(relQB);
+
+            // Get conditions from callback
+            const relConditions: Condition[] = (relQB as any).conditions
+                ? JSON.parse(JSON.stringify((relQB as any).conditions))
+                : [];
+
+            // Apply soft delete scope
+            const relSoft = (RelatedModel as any).softDeletes;
+            if (relSoft) {
+                const mode = (relQB as any).trashedMode as 'default' | 'with' | 'only';
+                if (mode === 'default') {
+                    relConditions.push({ operator: 'AND', type: 'null', column: `${relatedTable}.deleted_at` } as any);
+                } else if (mode === 'only') {
+                    relConditions.push({ operator: 'AND', type: 'not_null', column: `${relatedTable}.deleted_at` } as any);
+                }
+            }
+
+            const where = this.buildWhereClause(relConditions);
+            const whereSql = where.sql ? ` AND ${where.sql}` : '';
+
+            // Build EXISTS subquery for this morph type
+            const sql = `(${parentTable}.${typeColumn} = ? AND EXISTS (
+                SELECT 1 FROM ${relatedTable}
+                WHERE ${relatedTable}.id = ${parentTable}.${idColumn}${whereSql}
+            ))`;
+
+            allParts.push(sql);
+            allParams.push(morphType, ...where.params);
+        }
+
+        return {
+            sql: allParts.join(' OR '),
+            params: allParams
+        };
     }
 
     with<K extends string>(relations: K | K[] | Record<K, string[] | ((query: QueryBuilder<any>) => void)>, callback?: (query: QueryBuilder<any>) => void): QueryBuilder<M, TWith | K> {

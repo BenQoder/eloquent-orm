@@ -132,13 +132,15 @@ declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith ex
     private getBelongsToForeignKey;
     whereRelation(relation: string, callback?: (query: QueryBuilder) => void): this;
     orWhereRelation(relation: string, callback?: (query: QueryBuilder) => void): this;
-    whereHasMorph(relation: string, modelType: string | typeof Eloquent, callback?: (query: QueryBuilder) => void): this;
+    whereHasMorph(relation: string, types: string | typeof Eloquent | (string | typeof Eloquent)[], callback?: (query: QueryBuilder) => void): this;
+    orWhereHasMorph(relation: string, types: string | typeof Eloquent | (string | typeof Eloquent)[], callback?: (query: QueryBuilder) => void): this;
     whereMorphedTo(relation: string, model: any): this;
     has(relation: string, operator?: string, count?: number): this;
     orHas(relation: string, operator?: string, count?: number): this;
     withCount(relations: string | string[] | Record<string, (query: QueryBuilder) => void>): this;
     private buildCountSubquery;
     private buildHasSubquery;
+    private buildHasMorphSubquery;
     with<K extends string>(relations: K | K[] | Record<K, string[] | ((query: QueryBuilder<any>) => void)>, callback?: (query: QueryBuilder<any>) => void): QueryBuilder<M, TWith | K>;
     private parseRelationWithColumns;
     withWhereHas(relation: string, callback?: (query: QueryBuilder) => void): any;
