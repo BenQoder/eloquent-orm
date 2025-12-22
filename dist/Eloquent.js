@@ -2847,10 +2847,19 @@ class Eloquent {
     }
     toJSON() {
         const hidden = this.constructor.hidden || [];
+        const appends = this.constructor.appends || [];
         const out = {};
+        // Include regular properties (excluding hidden)
         for (const key of Object.keys(this)) {
             if (hidden.includes(key))
                 continue;
+            out[key] = this[key];
+        }
+        // Include appended computed properties (accessors/getters)
+        for (const key of appends) {
+            if (hidden.includes(key))
+                continue;
+            // Access via instance to trigger getter/accessor through Proxy
             out[key] = this[key];
         }
         return out;
@@ -3120,6 +3129,7 @@ class Eloquent {
     }
 }
 Eloquent.hidden = [];
+Eloquent.appends = [];
 Eloquent.with = [];
 Eloquent.connection = null;
 Eloquent.morphMap = {};

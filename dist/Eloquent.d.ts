@@ -220,6 +220,7 @@ declare class Eloquent {
     [key: string]: any;
     protected static table?: string;
     protected static hidden: string[];
+    protected static appends: string[];
     protected static with: string[];
     static connection: any;
     private static morphMap;

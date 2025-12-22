@@ -2500,6 +2500,7 @@ class Eloquent {
     [key: string]: any;
     protected static table?: string;
     protected static hidden: string[] = [];
+    protected static appends: string[] = [];
     protected static with: string[] = [];
     static connection: any = null;
     private static morphMap: Record<string, typeof Eloquent> = {};
@@ -3138,11 +3139,22 @@ class Eloquent {
 
     toJSON() {
         const hidden: string[] = ((this.constructor as any).hidden as string[]) || [];
+        const appends: string[] = ((this.constructor as any).appends as string[]) || [];
         const out: any = {};
+
+        // Include regular properties (excluding hidden)
         for (const key of Object.keys(this as any)) {
             if (hidden.includes(key)) continue;
             out[key] = (this as any)[key];
         }
+
+        // Include appended computed properties (accessors/getters)
+        for (const key of appends) {
+            if (hidden.includes(key)) continue;
+            // Access via instance to trigger getter/accessor through Proxy
+            out[key] = (this as any)[key];
+        }
+
         return out;
     }
 
