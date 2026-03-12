@@ -15,6 +15,7 @@
  * @readonly
  */
 import type { z } from 'zod';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { HasMany, HasOne, BelongsTo, BelongsToMany, MorphMany, MorphOne, MorphTo, MorphOneOfMany, HasManyThrough, HasOneThrough } from './relations';
 type RelationsOf<T> = T extends {
     relationsTypes: infer RT;
@@ -223,6 +224,17 @@ declare class Eloquent {
     protected static appends: string[];
     protected static with: string[];
     static connection: any;
+    static connectionStorage: AsyncLocalStorage<any>;
+    /**
+     * Get the active database connection.
+     * Prefers the context-scoped AsyncLocalStorage connection, falling back to the global static instance.
+     */
+    static getConnection(): any;
+    /**
+     * Execute a callback within an isolated connection context.
+     * Crucial for Cloudflare Workers where `static connection` gets clobbered by concurrent HTTP requests.
+     */
+    static withConnection<T>(connection: any, callback: () => Promise<T>): Promise<T>;
     private static morphMap;
     static automaticallyEagerLoadRelationshipsEnabled: boolean;
     protected static rows?: Record<string, any>[];

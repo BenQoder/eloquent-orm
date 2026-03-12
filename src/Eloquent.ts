@@ -15,6 +15,7 @@
  * @readonly
  */
 import type { z } from 'zod';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 // Import Relation classes
 import {
@@ -318,7 +319,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         if ((this.model as any).usesSushi()) {
             return this.aggregateSushi(functionName, column);
         }
-        if (!Eloquent.connection) throw new Error('Database connection not initialized');
+        if (!(this.model as any).usesSushi() && !Eloquent.getConnection()) throw new Error('Database connection not initialized');
         const table = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
         let sql = `SELECT ${functionName}(${column}) as aggregate FROM ${table}`;
         const allConditions: Condition[] = this.conditions ? JSON.parse(JSON.stringify(this.conditions)) : [];
@@ -352,7 +353,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         this.debugLog('Executing aggregate query', { sql, params: whereClause.params, function: functionName, column });
 
         this.ensureReadOnlySql(sql, 'aggregate');
-        const [rows] = await (Eloquent.connection as any).query(sql, whereClause.params);
+        const [rows] = await (Eloquent.getConnection() as any).query(sql, whereClause.params);
         const result = (rows as any[])[0].aggregate;
 
         // Debug logging - aggregate completed
@@ -1763,7 +1764,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
     async first<TExplicit>(): Promise<TExplicit | null>;
     async first<TExplicit = WithRelations<InstanceType<M>, TWith>>(): Promise<TExplicit | null> {
         // Check for Sushi first - no database needed
-        if (!(this.model as any).usesSushi() && !Eloquent.connection) {
+        if (!(this.model as any).usesSushi() && !Eloquent.getConnection()) {
             throw new Error('Database connection not initialized');
         }
         const one = this.clone().limit(1);
@@ -1870,7 +1871,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             return this.getSushi<TExplicit>();
         }
 
-        if (!Eloquent.connection) throw new Error('Database connection not initialized');
+        if (!Eloquent.getConnection()) throw new Error('Database connection not initialized');
         const hasUnions = this.unions.length > 0;
         const main = this.buildSelectSql({ includeOrderLimit: !hasUnions });
         let sql = main.sql;
@@ -1895,7 +1896,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             if (this.offsetValue !== undefined) sql += ` OFFSET ${this.offsetValue}`;
         }
         this.ensureReadOnlySql(sql, 'get');
-        const [rows] = await (Eloquent.connection as any).query(sql, allParams);
+        const [rows] = await (Eloquent.getConnection() as any).query(sql, allParams);
         const instances = (rows as any[]).map(row => {
             const instance = new (this.model as any)() as InstanceType<M>;
             // Extract pivot data if requested
@@ -2503,6 +2504,23 @@ class Eloquent {
     protected static appends: string[] = [];
     protected static with: string[] = [];
     static connection: any = null;
+    static connectionStorage = new AsyncLocalStorage<any>();
+
+    /**
+     * Get the active database connection.
+     * Prefers the context-scoped AsyncLocalStorage connection, falling back to the global static instance.
+     */
+    static getConnection(): any {
+        return Eloquent.connectionStorage.getStore() || Eloquent.connection;
+    }
+
+    /**
+     * Execute a callback within an isolated connection context.
+     * Crucial for Cloudflare Workers where `static connection` gets clobbered by concurrent HTTP requests.
+     */
+    static async withConnection<T>(connection: any, callback: () => Promise<T>): Promise<T> {
+        return Eloquent.connectionStorage.run(connection, callback);
+    }
     private static morphMap: Record<string, typeof Eloquent> = {};
     public static automaticallyEagerLoadRelationshipsEnabled: boolean = false;
 

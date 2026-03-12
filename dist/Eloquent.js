@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 // Import Relation classes
 import { Relation, HasMany, HasOne, BelongsTo, BelongsToMany, MorphMany, MorphOne, MorphTo, MorphOneOfMany, HasManyThrough, HasOneThrough, } from './relations';
 class QueryBuilder {
@@ -175,7 +176,7 @@ class QueryBuilder {
         if (this.model.usesSushi()) {
             return this.aggregateSushi(functionName, column);
         }
-        if (!Eloquent.connection)
+        if (!this.model.usesSushi() && !Eloquent.getConnection())
             throw new Error('Database connection not initialized');
         const table = this.tableName || this.model.table || this.model.name.toLowerCase() + 's';
         let sql = `SELECT ${functionName}(${column}) as aggregate FROM ${table}`;
@@ -208,7 +209,7 @@ class QueryBuilder {
         // Debug logging
         this.debugLog('Executing aggregate query', { sql, params: whereClause.params, function: functionName, column });
         this.ensureReadOnlySql(sql, 'aggregate');
-        const [rows] = await Eloquent.connection.query(sql, whereClause.params);
+        const [rows] = await Eloquent.getConnection().query(sql, whereClause.params);
         const result = rows[0].aggregate;
         // Debug logging - aggregate completed
         this.debugLog('Aggregate query completed', { function: functionName, column, result });
@@ -1631,7 +1632,7 @@ class QueryBuilder {
     }
     async first() {
         // Check for Sushi first - no database needed
-        if (!this.model.usesSushi() && !Eloquent.connection) {
+        if (!this.model.usesSushi() && !Eloquent.getConnection()) {
             throw new Error('Database connection not initialized');
         }
         const one = this.clone().limit(1);
@@ -1724,7 +1725,7 @@ class QueryBuilder {
         if (this.model.usesSushi()) {
             return this.getSushi();
         }
-        if (!Eloquent.connection)
+        if (!Eloquent.getConnection())
             throw new Error('Database connection not initialized');
         const hasUnions = this.unions.length > 0;
         const main = this.buildSelectSql({ includeOrderLimit: !hasUnions });
@@ -1751,7 +1752,7 @@ class QueryBuilder {
                 sql += ` OFFSET ${this.offsetValue}`;
         }
         this.ensureReadOnlySql(sql, 'get');
-        const [rows] = await Eloquent.connection.query(sql, allParams);
+        const [rows] = await Eloquent.getConnection().query(sql, allParams);
         const instances = rows.map(row => {
             const instance = new this.model();
             // Extract pivot data if requested
@@ -2298,6 +2299,20 @@ class ThroughBuilder {
     }
 }
 class Eloquent {
+    /**
+     * Get the active database connection.
+     * Prefers the context-scoped AsyncLocalStorage connection, falling back to the global static instance.
+     */
+    static getConnection() {
+        return Eloquent.connectionStorage.getStore() || Eloquent.connection;
+    }
+    /**
+     * Execute a callback within an isolated connection context.
+     * Crucial for Cloudflare Workers where `static connection` gets clobbered by concurrent HTTP requests.
+     */
+    static async withConnection(connection, callback) {
+        return Eloquent.connectionStorage.run(connection, callback);
+    }
     /**
      * Check if this model uses Sushi (in-memory array data)
      * Override this method to return true for API-based Sushi models
@@ -3132,6 +3147,7 @@ Eloquent.hidden = [];
 Eloquent.appends = [];
 Eloquent.with = [];
 Eloquent.connection = null;
+Eloquent.connectionStorage = new AsyncLocalStorage();
 Eloquent.morphMap = {};
 Eloquent.automaticallyEagerLoadRelationshipsEnabled = false;
 // Debug logging
