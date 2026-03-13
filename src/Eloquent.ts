@@ -355,7 +355,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
 
         this.ensureReadOnlySql(sql, 'aggregate');
         const [rows] = await (Eloquent.getConnection() as any).query(sql, whereClause.params);
-        const result = (rows as any[])[0].aggregate;
+        const result = (rows as any[])?.[0]?.aggregate ?? 0;
 
         // Debug logging - aggregate completed
         this.debugLog('Aggregate query completed', { function: functionName, column, result });

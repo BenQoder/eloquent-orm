@@ -211,7 +211,7 @@ class QueryBuilder {
         this.debugLog('Executing aggregate query', { sql, params: whereClause.params, function: functionName, column });
         this.ensureReadOnlySql(sql, 'aggregate');
         const [rows] = await Eloquent.getConnection().query(sql, whereClause.params);
-        const result = rows[0].aggregate;
+        const result = rows?.[0]?.aggregate ?? 0;
         // Debug logging - aggregate completed
         this.debugLog('Aggregate query completed', { function: functionName, column, result });
         return result;
