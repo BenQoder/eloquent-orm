@@ -2332,14 +2332,19 @@ class Eloquent {
      *   });
      */
     static async hyperdrive(binding, morphs, callback) {
-        // Strip SSL params mysql2 doesn't understand (Hyperdrive injects sslmode / ssl-mode)
-        const url = new URL(binding.connectionString);
-        url.searchParams.delete('sslmode');
-        url.searchParams.delete('ssl-mode');
-        const connection = await createConnection({
-            uri: url.toString(),
-            disableEval: true,
-        });
+        // Use individual params when available (Hyperdrive binding exposes host/user/password/database/port).
+        // This avoids parsing the connectionString URI which may contain params mysql2 doesn't
+        // understand (e.g. ssl-mode, sslmode) and could cause warnings or silent misbehaviour.
+        const connection = await createConnection(binding.host
+            ? {
+                host: binding.host,
+                user: binding.user,
+                password: binding.password,
+                database: binding.database,
+                port: Number(binding.port) || 3306,
+                disableEval: true,
+            }
+            : { uri: binding.connectionString, disableEval: true });
         if (morphs && !Eloquent.morphsRegistered) {
             Eloquent.morphMap = { ...morphs };
             Eloquent.morphsRegistered = true;

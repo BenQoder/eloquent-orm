@@ -254,6 +254,11 @@ declare class Eloquent {
      */
     static hyperdrive<T>(binding: {
         connectionString: string;
+        host?: string;
+        user?: string;
+        password?: string;
+        database?: string;
+        port?: number | string;
     }, morphs: Record<string, typeof Eloquent> | undefined, callback: () => Promise<T>): Promise<T>;
     private static morphsRegistered;
     private static morphMap;
