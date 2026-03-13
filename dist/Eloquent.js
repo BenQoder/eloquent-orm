@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createConnection } from 'mysql2/promise';
 // Import Relation classes
 import { Relation, HasMany, HasOne, BelongsTo, BelongsToMany, MorphMany, MorphOne, MorphTo, MorphOneOfMany, HasManyThrough, HasOneThrough, } from './relations';
 class QueryBuilder {
@@ -2314,6 +2315,39 @@ class Eloquent {
         return Eloquent.connectionStorage.run(connection, callback);
     }
     /**
+     * Run a callback with a fresh Hyperdrive-backed connection.
+     *
+     * Hyperdrive manages the actual MySQL connection pool — opening/closing connections
+     * against it is cheap (just acquiring/returning a slot from the local proxy).
+     * This method therefore handles the full lifecycle internally: it opens a connection,
+     * scopes it via withConnection() so all queries inside the callback use it, then
+     * closes it in a finally block. No ctx.waitUntil() needed by the caller.
+     *
+     * Model mappings (morphMap) are registered once per isolate — subsequent calls are
+     * a no-op for that step.
+     *
+     * Usage:
+     *   const result = await Eloquent.hyperdrive(env.BACKEND_DB, MODEL_MAPPINGS, async () => {
+     *     return await handler.execute(...);
+     *   });
+     */
+    static async hyperdrive(binding, morphs, callback) {
+        const connection = await createConnection({
+            uri: binding.connectionString,
+            disableEval: true,
+        });
+        if (morphs && !Eloquent.morphsRegistered) {
+            Eloquent.morphMap = { ...morphs };
+            Eloquent.morphsRegistered = true;
+        }
+        try {
+            return await Eloquent.connectionStorage.run(connection, callback);
+        }
+        finally {
+            await connection.end();
+        }
+    }
+    /**
      * Check if this model uses Sushi (in-memory array data)
      * Override this method to return true for API-based Sushi models
      */
@@ -3148,6 +3182,7 @@ Eloquent.appends = [];
 Eloquent.with = [];
 Eloquent.connection = null;
 Eloquent.connectionStorage = new AsyncLocalStorage();
+Eloquent.morphsRegistered = false;
 Eloquent.morphMap = {};
 Eloquent.automaticallyEagerLoadRelationshipsEnabled = false;
 // Debug logging

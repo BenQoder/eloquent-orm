@@ -235,6 +235,27 @@ declare class Eloquent {
      * Crucial for Cloudflare Workers where `static connection` gets clobbered by concurrent HTTP requests.
      */
     static withConnection<T>(connection: any, callback: () => Promise<T>): Promise<T>;
+    /**
+     * Run a callback with a fresh Hyperdrive-backed connection.
+     *
+     * Hyperdrive manages the actual MySQL connection pool — opening/closing connections
+     * against it is cheap (just acquiring/returning a slot from the local proxy).
+     * This method therefore handles the full lifecycle internally: it opens a connection,
+     * scopes it via withConnection() so all queries inside the callback use it, then
+     * closes it in a finally block. No ctx.waitUntil() needed by the caller.
+     *
+     * Model mappings (morphMap) are registered once per isolate — subsequent calls are
+     * a no-op for that step.
+     *
+     * Usage:
+     *   const result = await Eloquent.hyperdrive(env.BACKEND_DB, MODEL_MAPPINGS, async () => {
+     *     return await handler.execute(...);
+     *   });
+     */
+    static hyperdrive<T>(binding: {
+        connectionString: string;
+    }, morphs: Record<string, typeof Eloquent> | undefined, callback: () => Promise<T>): Promise<T>;
+    private static morphsRegistered;
     private static morphMap;
     static automaticallyEagerLoadRelationshipsEnabled: boolean;
     protected static rows?: Record<string, any>[];

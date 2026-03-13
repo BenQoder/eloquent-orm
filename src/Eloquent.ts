@@ -16,6 +16,7 @@
  */
 import type { z } from 'zod';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createConnection } from 'mysql2/promise';
 
 // Import Relation classes
 import {
@@ -2521,6 +2522,47 @@ class Eloquent {
     static async withConnection<T>(connection: any, callback: () => Promise<T>): Promise<T> {
         return Eloquent.connectionStorage.run(connection, callback);
     }
+
+    /**
+     * Run a callback with a fresh Hyperdrive-backed connection.
+     *
+     * Hyperdrive manages the actual MySQL connection pool — opening/closing connections
+     * against it is cheap (just acquiring/returning a slot from the local proxy).
+     * This method therefore handles the full lifecycle internally: it opens a connection,
+     * scopes it via withConnection() so all queries inside the callback use it, then
+     * closes it in a finally block. No ctx.waitUntil() needed by the caller.
+     *
+     * Model mappings (morphMap) are registered once per isolate — subsequent calls are
+     * a no-op for that step.
+     *
+     * Usage:
+     *   const result = await Eloquent.hyperdrive(env.BACKEND_DB, MODEL_MAPPINGS, async () => {
+     *     return await handler.execute(...);
+     *   });
+     */
+    static async hyperdrive<T>(
+        binding: { connectionString: string },
+        morphs: Record<string, typeof Eloquent> | undefined,
+        callback: () => Promise<T>
+    ): Promise<T> {
+        const connection = await createConnection({
+            uri: binding.connectionString,
+            disableEval: true,
+        });
+
+        if (morphs && !Eloquent.morphsRegistered) {
+            Eloquent.morphMap = { ...morphs };
+            Eloquent.morphsRegistered = true;
+        }
+
+        try {
+            return await Eloquent.connectionStorage.run(connection, callback);
+        } finally {
+            await connection.end();
+        }
+    }
+
+    private static morphsRegistered = false;
     private static morphMap: Record<string, typeof Eloquent> = {};
     public static automaticallyEagerLoadRelationshipsEnabled: boolean = false;
 
