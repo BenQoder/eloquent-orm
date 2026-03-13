@@ -2332,9 +2332,10 @@ class Eloquent {
      *   });
      */
     static async hyperdrive(binding, morphs, callback) {
-        // Strip params mysql2 doesn't understand (e.g. sslmode from Hyperdrive's connection string)
+        // Strip SSL params mysql2 doesn't understand (Hyperdrive injects sslmode / ssl-mode)
         const url = new URL(binding.connectionString);
         url.searchParams.delete('sslmode');
+        url.searchParams.delete('ssl-mode');
         const connection = await createConnection({
             uri: url.toString(),
             disableEval: true,
