@@ -259,7 +259,9 @@ declare class Eloquent {
         password?: string;
         database?: string;
         port?: number | string;
-    }, morphs: Record<string, typeof Eloquent> | undefined, callback: () => Promise<T>): Promise<T>;
+    }, morphs: Record<string, typeof Eloquent> | undefined, callback: () => Promise<T>, options?: {
+        connectTimeout?: number;
+    }): Promise<T>;
     private static morphsRegistered;
     private static morphMap;
     static automaticallyEagerLoadRelationshipsEnabled: boolean;

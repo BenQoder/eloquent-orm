@@ -2331,10 +2331,15 @@ class Eloquent {
      *     return await handler.execute(...);
      *   });
      */
-    static async hyperdrive(binding, morphs, callback) {
+    static async hyperdrive(binding, morphs, callback, options) {
         // Use individual params when available (Hyperdrive binding exposes host/user/password/database/port).
         // This avoids parsing the connectionString URI which may contain params mysql2 doesn't
         // understand (e.g. ssl-mode, sslmode) and could cause warnings or silent misbehaviour.
+        //
+        // connectTimeout (default 10s) prevents the worker from hanging indefinitely when
+        // Hyperdrive's proxy is stale/unresponsive — CF Workers would otherwise cancel the
+        // entire request after 30s with no useful error.
+        const connectTimeout = options?.connectTimeout ?? 10000;
         const connection = await createConnection(binding.host
             ? {
                 host: binding.host,
@@ -2343,8 +2348,9 @@ class Eloquent {
                 database: binding.database,
                 port: Number(binding.port) || 3306,
                 disableEval: true,
+                connectTimeout,
             }
-            : { uri: binding.connectionString, disableEval: true });
+            : { uri: binding.connectionString, disableEval: true, connectTimeout });
         if (morphs && !Eloquent.morphsRegistered) {
             Eloquent.morphMap = { ...morphs };
             Eloquent.morphsRegistered = true;
