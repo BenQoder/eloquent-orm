@@ -211,6 +211,19 @@ declare class Collection<T extends Eloquent> extends Array<T> {
     withRelationshipAutoloading(): this;
     isRelationshipAutoloadingEnabled(): boolean;
 }
+interface LoadBatchItem {
+    instances: Eloquent[];
+    relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>;
+}
+interface EloquentRequestContext {
+    connection: any;
+    morphMap: Record<string, typeof Eloquent>;
+    loadBatch: LoadBatchItem[];
+    loadingPromises: Map<string, Promise<void>>;
+    collectionsRegistry: Map<string, Eloquent[]>;
+    batchFlushScheduled: boolean;
+    automaticallyEagerLoadRelationshipsEnabled: boolean;
+}
 declare class ThroughBuilder {
     private instance;
     private throughRelation;
@@ -223,29 +236,35 @@ declare class Eloquent {
     protected static hidden: string[];
     protected static appends: string[];
     protected static with: string[];
-    static connection: any;
-    static connectionStorage: AsyncLocalStorage<any>;
+    static connectionStorage: AsyncLocalStorage<EloquentRequestContext>;
+    private static registeredMorphMap;
+    private static createRequestContext;
+    private static getContext;
+    private static requireContext;
+    private static getMorphMap;
     /**
      * Get the active database connection.
-     * Prefers the context-scoped AsyncLocalStorage connection, falling back to the global static instance.
+     * Workers-only: a connection must exist in the active AsyncLocalStorage request context.
      */
     static getConnection(): any;
     /**
      * Execute a callback within an isolated connection context.
-     * Crucial for Cloudflare Workers where `static connection` gets clobbered by concurrent HTTP requests.
+     * Crucial for Cloudflare Workers where all request-scoped state must remain isolated.
      */
-    static withConnection<T>(connection: any, callback: () => Promise<T>): Promise<T>;
+    static withConnection<T>(connection: any, callback: () => Promise<T>, options?: {
+        morphs?: Record<string, typeof Eloquent>;
+        automaticallyEagerLoadRelationshipsEnabled?: boolean;
+    }): Promise<T>;
     /**
      * Run a callback with a fresh Hyperdrive-backed connection.
      *
      * Hyperdrive manages the actual MySQL connection pool — opening/closing connections
      * against it is cheap (just acquiring/returning a slot from the local proxy).
-     * This method therefore handles the full lifecycle internally: it opens a connection,
-     * scopes it via withConnection() so all queries inside the callback use it, then
-     * closes it in a finally block. No ctx.waitUntil() needed by the caller.
-     *
-     * Model mappings (morphMap) are registered once per isolate — subsequent calls are
-     * a no-op for that step.
+     * This method opens a per-invocation connection and scopes it via withConnection()
+     * so all queries inside the callback use it. We intentionally do not call
+     * connection.end(): Hyperdrive automatically cleans up the Worker-side client
+     * connection when the invocation ends, while keeping the origin-side pooled
+     * connection alive for reuse.
      *
      * Usage:
      *   const result = await Eloquent.hyperdrive(env.BACKEND_DB, MODEL_MAPPINGS, async () => {
@@ -262,9 +281,6 @@ declare class Eloquent {
     }, morphs: Record<string, typeof Eloquent> | undefined, callback: () => Promise<T>, options?: {
         connectTimeout?: number;
     }): Promise<T>;
-    private static morphsRegistered;
-    private static morphMap;
-    static automaticallyEagerLoadRelationshipsEnabled: boolean;
     protected static rows?: Record<string, any>[];
     /**
      * Check if this model uses Sushi (in-memory array data)
@@ -284,9 +300,6 @@ declare class Eloquent {
     static disableDebug(): void;
     static raw(value: string): string;
     private static getLoadBatch;
-    private static getLoadedRelationsRegistry;
-    private static markRelationsAsLoaded;
-    private static areRelationsLoaded;
     private static getLoadingPromises;
     private static getLoadingCacheKey;
     private static getCollectionsRegistry;

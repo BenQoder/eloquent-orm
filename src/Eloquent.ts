@@ -1820,8 +1820,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
 
     dd(): never {
         this.dump();
-        process.exit(1);
-        throw new Error('Unreachable');
+        throw new Error('Execution halted by dd()');
     }
 
     whereColumn(first: string, operatorOrSecond: string, second?: string): this {
@@ -2390,14 +2389,14 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
 
     private shouldAutoLoad(instance: Eloquent, relationName: string): boolean {
         // Check if global auto-loading is enabled or instance belongs to a collection with auto-loading
-        const globalEnabled = (Eloquent as any).automaticallyEagerLoadRelationshipsEnabled;
+        const globalEnabled = (Eloquent as any).isAutomaticallyEagerLoadRelationshipsEnabled();
         const collectionAutoLoad = (instance as any).__collectionAutoLoad;
         return globalEnabled || collectionAutoLoad;
     }
 
     private async autoLoadRelation(instance: Eloquent, relationName: string) {
         const collection = (instance as any).__collection;
-        const globalEnabled = (Eloquent as any).automaticallyEagerLoadRelationshipsEnabled;
+        const globalEnabled = (Eloquent as any).isAutomaticallyEagerLoadRelationshipsEnabled();
 
         // Check if we should load for the entire collection
         const shouldLoadCollection = collection && (
@@ -2443,7 +2442,7 @@ class Collection<T extends Eloquent> extends Array<T> {
     }
 
     isRelationshipAutoloadingEnabled(): boolean {
-        return this.relationshipAutoloadingEnabled || (Eloquent as any).automaticallyEagerLoadRelationshipsEnabled;
+        return this.relationshipAutoloadingEnabled || (Eloquent as any).isAutomaticallyEagerLoadRelationshipsEnabled();
     }
 }
 
@@ -2453,24 +2452,15 @@ interface LoadBatchItem {
     relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>;
 }
 
-// Global registry to track loaded relations by model and ID
-interface LoadedRelationsRegistry {
-    [modelName: string]: {
-        [instanceId: string | number]: {
-            [relationName: string]: boolean;
-        };
-    };
+interface EloquentRequestContext {
+    connection: any;
+    morphMap: Record<string, typeof Eloquent>;
+    loadBatch: LoadBatchItem[];
+    loadingPromises: Map<string, Promise<void>>;
+    collectionsRegistry: Map<string, Eloquent[]>;
+    batchFlushScheduled: boolean;
+    automaticallyEagerLoadRelationshipsEnabled: boolean;
 }
-
-declare const globalThis: any;
-declare const process: any;
-
-// Static properties for batching
-const LOAD_BATCH_KEY = Symbol('loadBatch');
-const LOADED_RELATIONS_REGISTRY_KEY = Symbol('loadedRelationsRegistry');
-const BATCH_TIMER_KEY = Symbol('batchTimer');
-const LOADING_PROMISES_KEY = Symbol('loadingPromises');
-const COLLECTIONS_REGISTRY_KEY = Symbol('collectionsRegistry');
 
 let COLLECTION_ID_COUNTER = 0;
 
@@ -2504,23 +2494,70 @@ class Eloquent {
     protected static hidden: string[] = [];
     protected static appends: string[] = [];
     protected static with: string[] = [];
-    static connection: any = null;
-    static connectionStorage = new AsyncLocalStorage<any>();
+    static connectionStorage = new AsyncLocalStorage<EloquentRequestContext>();
+    private static registeredMorphMap: Record<string, typeof Eloquent> = {};
+
+    private static createRequestContext(
+        connection: any,
+        options?: {
+            morphs?: Record<string, typeof Eloquent>;
+            automaticallyEagerLoadRelationshipsEnabled?: boolean;
+        }
+    ): EloquentRequestContext {
+        return {
+            connection,
+            morphMap: { ...Eloquent.registeredMorphMap, ...(options?.morphs || {}) },
+            loadBatch: [],
+            loadingPromises: new Map(),
+            collectionsRegistry: new Map(),
+            batchFlushScheduled: false,
+            automaticallyEagerLoadRelationshipsEnabled: options?.automaticallyEagerLoadRelationshipsEnabled ?? false,
+        };
+    }
+
+    private static getContext(): EloquentRequestContext | null {
+        return Eloquent.connectionStorage.getStore() || null;
+    }
+
+    private static requireContext(operation: string): EloquentRequestContext {
+        const context = Eloquent.getContext();
+        if (!context) {
+            throw new Error(
+                `No active Eloquent request context for ${operation}. ` +
+                `Wrap database work inside Eloquent.withConnection() or Eloquent.hyperdrive(). ` +
+                `Lazy-loading relationships outside that scope is not supported in Workers.`
+            );
+        }
+        return context;
+    }
+
+    private static getMorphMap(): Record<string, typeof Eloquent> {
+        const context = Eloquent.getContext();
+        return context ? context.morphMap : Eloquent.registeredMorphMap;
+    }
 
     /**
      * Get the active database connection.
-     * Prefers the context-scoped AsyncLocalStorage connection, falling back to the global static instance.
+     * Workers-only: a connection must exist in the active AsyncLocalStorage request context.
      */
     static getConnection(): any {
-        return Eloquent.connectionStorage.getStore() || Eloquent.connection;
+        return Eloquent.requireContext('query execution').connection;
     }
 
     /**
      * Execute a callback within an isolated connection context.
-     * Crucial for Cloudflare Workers where `static connection` gets clobbered by concurrent HTTP requests.
+     * Crucial for Cloudflare Workers where all request-scoped state must remain isolated.
      */
-    static async withConnection<T>(connection: any, callback: () => Promise<T>): Promise<T> {
-        return Eloquent.connectionStorage.run(connection, callback);
+    static async withConnection<T>(
+        connection: any,
+        callback: () => Promise<T>,
+        options?: {
+            morphs?: Record<string, typeof Eloquent>;
+            automaticallyEagerLoadRelationshipsEnabled?: boolean;
+        }
+    ): Promise<T> {
+        const context = Eloquent.createRequestContext(connection, options);
+        return Eloquent.connectionStorage.run(context, callback);
     }
 
     /**
@@ -2528,12 +2565,11 @@ class Eloquent {
      *
      * Hyperdrive manages the actual MySQL connection pool — opening/closing connections
      * against it is cheap (just acquiring/returning a slot from the local proxy).
-     * This method therefore handles the full lifecycle internally: it opens a connection,
-     * scopes it via withConnection() so all queries inside the callback use it, then
-     * closes it in a finally block. No ctx.waitUntil() needed by the caller.
-     *
-     * Model mappings (morphMap) are registered once per isolate — subsequent calls are
-     * a no-op for that step.
+     * This method opens a per-invocation connection and scopes it via withConnection()
+     * so all queries inside the callback use it. We intentionally do not call
+     * connection.end(): Hyperdrive automatically cleans up the Worker-side client
+     * connection when the invocation ends, while keeping the origin-side pooled
+     * connection alive for reuse.
      *
      * Usage:
      *   const result = await Eloquent.hyperdrive(env.BACKEND_DB, MODEL_MAPPINGS, async () => {
@@ -2568,21 +2604,8 @@ class Eloquent {
                 : { uri: binding.connectionString, disableEval: true, connectTimeout }
         );
 
-        if (morphs && !Eloquent.morphsRegistered) {
-            Eloquent.morphMap = { ...morphs };
-            Eloquent.morphsRegistered = true;
-        }
-
-        try {
-            return await Eloquent.connectionStorage.run(connection, callback);
-        } finally {
-            await connection.end();
-        }
+        return await Eloquent.withConnection(connection, callback, { morphs });
     }
-
-    private static morphsRegistered = false;
-    private static morphMap: Record<string, typeof Eloquent> = {};
-    public static automaticallyEagerLoadRelationshipsEnabled: boolean = false;
 
     // Sushi support - static array data source (like Laravel's Sushi package)
     protected static rows?: Record<string, any>[];
@@ -2617,11 +2640,11 @@ class Eloquent {
     };
 
     static automaticallyEagerLoadRelationships(): void {
-        Eloquent.automaticallyEagerLoadRelationshipsEnabled = true;
+        Eloquent.requireContext('automatic relationship loading').automaticallyEagerLoadRelationshipsEnabled = true;
     }
 
     static isAutomaticallyEagerLoadRelationshipsEnabled(): boolean {
-        return Eloquent.automaticallyEagerLoadRelationshipsEnabled;
+        return Eloquent.getContext()?.automaticallyEagerLoadRelationshipsEnabled ?? false;
     }
 
     static enableDebug(logger?: (message: string, data?: any) => void): void {
@@ -2641,71 +2664,12 @@ class Eloquent {
 
     // Batching system for loadForAll
     private static getLoadBatch(): LoadBatchItem[] {
-        // Use globalThis if available, otherwise use a module-level variable
-        if (typeof globalThis !== 'undefined') {
-            if (!globalThis[LOAD_BATCH_KEY]) {
-                globalThis[LOAD_BATCH_KEY] = [];
-            }
-            return globalThis[LOAD_BATCH_KEY];
-        }
-
-        // Fallback: use a static property on the Eloquent class
-        if (!(Eloquent as any)[LOAD_BATCH_KEY]) {
-            (Eloquent as any)[LOAD_BATCH_KEY] = [];
-        }
-        return (Eloquent as any)[LOAD_BATCH_KEY];
-    }
-
-    // Global registry for tracking loaded relations by model and ID
-    private static getLoadedRelationsRegistry(): LoadedRelationsRegistry {
-        if (typeof globalThis !== 'undefined') {
-            if (!globalThis[LOADED_RELATIONS_REGISTRY_KEY]) {
-                globalThis[LOADED_RELATIONS_REGISTRY_KEY] = {};
-            }
-            return globalThis[LOADED_RELATIONS_REGISTRY_KEY];
-        }
-
-        if (!(Eloquent as any)[LOADED_RELATIONS_REGISTRY_KEY]) {
-            (Eloquent as any)[LOADED_RELATIONS_REGISTRY_KEY] = {};
-        }
-        return (Eloquent as any)[LOADED_RELATIONS_REGISTRY_KEY];
-    }
-
-    private static markRelationsAsLoaded(modelName: string, instanceId: string | number, relationNames: string[]): void {
-        const registry = this.getLoadedRelationsRegistry();
-        if (!registry[modelName]) {
-            registry[modelName] = {};
-        }
-        if (!registry[modelName][instanceId]) {
-            registry[modelName][instanceId] = {};
-        }
-        relationNames.forEach(name => {
-            registry[modelName][instanceId][name] = true;
-        });
-    }
-
-    private static areRelationsLoaded(modelName: string, instanceId: string | number, relationNames: string[]): boolean {
-        const registry = this.getLoadedRelationsRegistry();
-        const modelRegistry = registry[modelName];
-        if (!modelRegistry || !modelRegistry[instanceId]) {
-            return false;
-        }
-        return relationNames.every(name => modelRegistry[instanceId][name] === true);
+        return Eloquent.requireContext('load batching').loadBatch;
     }
 
     // Get the loading promises cache
     private static getLoadingPromises(): Map<string, Promise<void>> {
-        if (typeof globalThis !== 'undefined') {
-            if (!globalThis[LOADING_PROMISES_KEY]) {
-                globalThis[LOADING_PROMISES_KEY] = new Map();
-            }
-            return globalThis[LOADING_PROMISES_KEY];
-        }
-
-        if (!(Eloquent as any)[LOADING_PROMISES_KEY]) {
-            (Eloquent as any)[LOADING_PROMISES_KEY] = new Map();
-        }
-        return (Eloquent as any)[LOADING_PROMISES_KEY];
+        return Eloquent.requireContext('relation loading').loadingPromises;
     }
 
     // Generate a cache key for a loading operation
@@ -2717,17 +2681,7 @@ class Eloquent {
 
     // Get the collections registry
     private static getCollectionsRegistry(): Map<string, Eloquent[]> {
-        if (typeof globalThis !== 'undefined') {
-            if (!globalThis[COLLECTIONS_REGISTRY_KEY]) {
-                globalThis[COLLECTIONS_REGISTRY_KEY] = new Map();
-            }
-            return globalThis[COLLECTIONS_REGISTRY_KEY];
-        }
-
-        if (!(Eloquent as any)[COLLECTIONS_REGISTRY_KEY]) {
-            (Eloquent as any)[COLLECTIONS_REGISTRY_KEY] = new Map();
-        }
-        return (Eloquent as any)[COLLECTIONS_REGISTRY_KEY];
+        return Eloquent.requireContext('collection tracking').collectionsRegistry;
     }
 
     // Generate a unique collection ID
@@ -2759,43 +2713,33 @@ class Eloquent {
     }
 
     private static scheduleBatchFlush(): void {
-        // Check if already scheduled
-        const isScheduled = typeof globalThis !== 'undefined' ?
-            globalThis[BATCH_TIMER_KEY] :
-            (Eloquent as any)[BATCH_TIMER_KEY];
-
-        if (isScheduled) {
-            return; // Already scheduled
+        const context = Eloquent.requireContext('load batching');
+        if (context.batchFlushScheduled) {
+            return;
         }
 
-        const flushBatch = () => {
-            const batch = this.getLoadBatch();
-            if (batch.length > 0) {
-                this.flushLoadBatch();
-            }
+        context.batchFlushScheduled = true;
 
-            // Clear the timer flag
-            if (typeof globalThis !== 'undefined') {
-                globalThis[BATCH_TIMER_KEY] = false;
-            } else {
-                (Eloquent as any)[BATCH_TIMER_KEY] = false;
+        const flushBatch = async () => {
+            try {
+                await Eloquent.connectionStorage.run(context, async () => {
+                    if (context.loadBatch.length > 0) {
+                        await this.flushLoadBatch();
+                    }
+                });
+            } finally {
+                context.batchFlushScheduled = false;
             }
         };
 
-        // Set the timer flag
-        if (typeof globalThis !== 'undefined') {
-            globalThis[BATCH_TIMER_KEY] = true;
+        if (typeof queueMicrotask === 'function') {
+            queueMicrotask(() => {
+                void flushBatch();
+            });
         } else {
-            (Eloquent as any)[BATCH_TIMER_KEY] = true;
-        }
-
-        // Use the most appropriate async scheduling mechanism
-        if (typeof process !== 'undefined' && process.nextTick) {
-            process.nextTick(flushBatch);
-        } else if (typeof globalThis !== 'undefined' && typeof (globalThis as any).setImmediate !== 'undefined') {
-            (globalThis as any).setImmediate(flushBatch);
-        } else {
-            setTimeout(flushBatch, 0);
+            Promise.resolve().then(() => {
+                void flushBatch();
+            });
         }
     }
 
@@ -2840,28 +2784,28 @@ class Eloquent {
 
     // Public method to clear the load batch without executing (useful for cleanup)
     static clearLoadForAllBatch(): void {
-        this.getLoadBatch().length = 0;
-        // Clear the timer flag as well
-        if (typeof globalThis !== 'undefined') {
-            globalThis[BATCH_TIMER_KEY] = false;
-        } else {
-            (Eloquent as any)[BATCH_TIMER_KEY] = false;
-        }
+        const context = Eloquent.getContext();
+        if (!context) return;
+        context.loadBatch.length = 0;
+        context.batchFlushScheduled = false;
     }
 
     static async init(connection: any, morphs?: Record<string, typeof Eloquent>) {
-        // Require an already-created connection
-        Eloquent.connection = connection;
-        if (morphs) {
-            Eloquent.morphMap = { ...morphs };
-        }
+        void connection;
+        void morphs;
+        throw new Error(
+            'Eloquent.init() is not supported in the Workers-only runtime. ' +
+            'Wrap queries inside Eloquent.withConnection() or Eloquent.hyperdrive() instead.'
+        );
     }
 
     static useConnection(connection: any, morphs?: Record<string, typeof Eloquent>) {
-        Eloquent.connection = connection;
-        if (morphs) {
-            Eloquent.morphMap = { ...morphs };
-        }
+        void connection;
+        void morphs;
+        throw new Error(
+            'Eloquent.useConnection() is not supported in the Workers-only runtime. ' +
+            'Wrap queries inside Eloquent.withConnection() or Eloquent.hyperdrive() instead.'
+        );
     }
 
     // Infer relation config from instance relation methods (Laravel-style),
@@ -3098,13 +3042,17 @@ class Eloquent {
     }
 
     static registerMorphMap(map: Record<string, typeof Eloquent>) {
-        Eloquent.morphMap = { ...Eloquent.morphMap, ...map };
+        Eloquent.registeredMorphMap = { ...Eloquent.registeredMorphMap, ...map };
+        const context = Eloquent.getContext();
+        if (context) {
+            context.morphMap = { ...context.morphMap, ...map };
+        }
     }
 
     static getMorphTypeForModel(model: typeof Eloquent): string {
         const explicit = (model as any).morphClass as string | undefined;
         if (explicit) return explicit;
-        for (const [alias, ctor] of Object.entries(Eloquent.morphMap)) {
+        for (const [alias, ctor] of Object.entries(Eloquent.getMorphMap())) {
             if (ctor === model) return alias;
         }
         return model.name; // fallback to class name
@@ -3112,10 +3060,11 @@ class Eloquent {
 
     static getModelForMorphType(type: string): typeof Eloquent | null {
         if (!type) return null;
-        if (Eloquent.morphMap[type]) return Eloquent.morphMap[type];
+        const morphMap = Eloquent.getMorphMap();
+        if (morphMap[type]) return morphMap[type];
 
         // Try to resolve from the morph map values (in case the key format doesn't match)
-        for (const [key, modelClass] of Object.entries(Eloquent.morphMap)) {
+        for (const [key, modelClass] of Object.entries(morphMap)) {
             if (key === type || (modelClass as any).morphClass === type) {
                 return modelClass;
             }
@@ -3134,7 +3083,7 @@ class Eloquent {
             for (const t of explicitTypes) if (t) set.add(t);
         }
         if (explicitClass) set.add(explicitClass);
-        for (const [alias, ctor] of Object.entries(Eloquent.morphMap)) {
+        for (const [alias, ctor] of Object.entries(Eloquent.getMorphMap())) {
             if (ctor === model) set.add(alias);
         }
         const className = model.name;
@@ -3298,7 +3247,7 @@ class Eloquent {
         // Parse full relation names including nested paths for cache key
         const fullRelationNames = (this.constructor as typeof Eloquent).parseFullRelationNames(relations);
 
-        // Check if already loaded via collection OR global registry
+        // Check if already loaded via the current request-scoped collection
         let alreadyLoaded = false;
         let targets: Eloquent[] = [this];
 
@@ -3322,44 +3271,9 @@ class Eloquent {
                 return name in rel;
             });
 
-            // Also populate registry for future serialized instances
-            if (alreadyLoaded && instanceId !== undefined) {
-                targets.forEach((target: any) => {
-                    const targetId = target.id;
-                    if (targetId !== undefined) {
-                        (Eloquent as any).markRelationsAsLoaded(modelName, targetId, relationNames);
-                    }
-                });
-            }
         } else {
-            // Use global registry for caching when we only have this instance
-            alreadyLoaded = (instanceId !== undefined) && (Eloquent as any).areRelationsLoaded(modelName, instanceId, relationNames);
-        }
-
-        // If not loaded via registry, check if any other instances of same model+id have the relations
-        if (!alreadyLoaded && instanceId !== undefined) {
-            const registry = (Eloquent as any).getLoadedRelationsRegistry();
-            const modelRegistry = registry[modelName];
-            if (modelRegistry && modelRegistry[instanceId]) {
-                // Mark relations as loaded on this instance if they're loaded for this ID
-                const loadedFromRegistry = relationNames.every(name => modelRegistry[instanceId][name] === true);
-                if (loadedFromRegistry) {
-                    alreadyLoaded = true;
-                    // Mark relations as loaded on this instance
-                    const holder = (this as any).__relations || {};
-                    if (!(this as any).__relations) {
-                        Object.defineProperty(this as any, '__relations', { value: holder, enumerable: false, configurable: true, writable: true });
-                    }
-                    relationNames.forEach(name => {
-                        holder[name] = true;
-                    });
-
-                    // Debug logging for registry hits
-                    if ((Eloquent as any).debugEnabled) {
-                        (Eloquent as any).debugLogger(`loadForAll: Using registry cached data for relations [${fullRelationNames.join(', ')}] on ${this.constructor.name}#${instanceId}`);
-                    }
-                }
-            }
+            const rels = (this as any).__relations || {};
+            alreadyLoaded = relationNames.every(name => name in rels);
         }
 
         // Debug logging for loadForAll behavior
@@ -3404,13 +3318,6 @@ class Eloquent {
 
                         await (this.constructor as typeof Eloquent).load(targets, relations);
 
-                        // Mark relations as loaded in the global registry for all targets
-                        targets.forEach((target: any) => {
-                            const targetId = target.id;
-                            if (targetId !== undefined) {
-                                (Eloquent as any).markRelationsAsLoaded(modelName, targetId, relationNames);
-                            }
-                        });
                     } finally {
                         // Remove the promise from the cache once complete
                         loadingPromises.delete(cacheKey);
