@@ -19,28 +19,30 @@ npm install @benqoder/eloquent-orm zod
 
 ## Quick Setup
 
-### 1. Initialize the ORM
+### 1. Open a Hyperdrive Request Scope
 
-First, initialize Eloquent with a connection to your Laravel database:
+Run Eloquent inside a Cloudflare Workers request scope backed by Hyperdrive:
 
 ```typescript
 import Eloquent from '@benqoder/eloquent-orm';
-import mysql from 'mysql2/promise';
-
-// Connect to your Laravel database using the same credentials
-const connection = await mysql.createConnection({
-    host: process.env.DB_HOST || 'localhost',
-    user: process.env.DB_USERNAME || 'your_user',
-    password: process.env.DB_PASSWORD || 'your_password',
-    database: process.env.DB_DATABASE || 'your_laravel_database', // Same as Laravel
-    port: parseInt(process.env.DB_PORT || '3306')
+const users = await Eloquent.hyperdrive(env.BACKEND_DB, undefined, async () => {
+    // The mysql2 client is created lazily on the first actual query.
+    return await User.query().limit(10).get();
 });
-
-// Initialize Eloquent
-await Eloquent.init(connection);
 ```
 
-**Important**: Use the exact same database connection details as your Laravel application's `.env` file.
+**Important**: Keep all ORM queries inside the `Eloquent.hyperdrive(...)` callback. The request-scoped client is released when the callback finishes.
+
+If you are using Hono, you can register the request scope once as middleware:
+
+```typescript
+app.use('*', Eloquent.honoMiddleware((c) => c.env.BACKEND_DB, MODEL_MAPPINGS));
+
+app.get('/users', async (c) => {
+    const users = await User.query().get();
+    return c.json(users);
+});
+```
 
 ### 2. Create Your First Model (Mirror Your Laravel Model)
 
@@ -495,15 +497,16 @@ await user.delete();                  // No delete method
 ```
 
 ### 2. Database Connections
-The ORM doesn't create connections:
+The ORM creates a request-scoped Hyperdrive client lazily on first query:
 
 ```typescript
-// ❌ Bad - Trying to create connection
-await Eloquent.init('mysql://localhost/db');
+// ❌ Bad - Querying outside a Hyperdrive request scope
+await User.query().get();
 
-// ✅ Good - Using existing connection
-const connection = await mysql.createConnection({...});
-await Eloquent.init(connection);
+// ✅ Good - Querying inside a Hyperdrive scope
+await Eloquent.hyperdrive(env.BACKEND_DB, undefined, async () => {
+    await User.query().get();
+});
 ```
 
 ### 3. Schema Validation Errors
@@ -544,8 +547,8 @@ relationsTypes!: {
 
 ### Runtime Errors
 
-**Problem**: "Database connection not initialized"
-**Solution**: Call `Eloquent.init()` before making queries
+**Problem**: "No active Eloquent request context"
+**Solution**: Wrap database work inside `Eloquent.hyperdrive(...)`
 
 **Problem**: Zod validation errors
 **Solution**: Check that your schema matches your database structure

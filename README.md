@@ -81,23 +81,15 @@ This package is designed to work with existing Laravel applications. You'll need
 
 ## 🚀 Quick Start
 
-### 1. Initialize Connection
+### 1. Open a Workers Request Scope
 
 ```typescript
 import Eloquent from '@benqoder/eloquent-orm';
-import mysql from 'mysql2/promise';
 
-// Connect to your Laravel database
-const connection = await mysql.createConnection({
-	host: process.env.DB_HOST,
-	user: process.env.DB_USERNAME,
-	password: process.env.DB_PASSWORD,
-	database: process.env.DB_DATABASE, // Same database as your Laravel app
-	port: parseInt(process.env.DB_PORT || '3306'),
+const users = await Eloquent.hyperdrive(env.BACKEND_DB, undefined, async () => {
+	// The mysql2 client is created lazily on first query in this callback
+	return await User.query().get();
 });
-
-// Initialize Eloquent with the Laravel database connection
-await Eloquent.init(connection);
 ```
 
 ### 2. Define Models (Mirror Your Laravel Models)
@@ -769,10 +761,26 @@ static schema = z.object({
 ```typescript
 import Eloquent from '@benqoder/eloquent-orm';
 
-// Initialize with existing connection
-await Eloquent.init(mysqlConnection);
+await Eloquent.hyperdrive(env.BACKEND_DB, MODEL_MAPPINGS, async () => {
+	// No client is created until the first actual query
+	const users = await User.query().with('posts').get();
+	return users;
+});
 
-// The ORM does not create connections - use your existing setup
+// The request-scoped client is released when the callback finishes
+```
+
+### Hono Middleware
+
+```typescript
+app.use('*', Eloquent.honoMiddleware((c) => c.env.BACKEND_DB, MODEL_MAPPINGS));
+
+app.get('/dashboard', async (c) => {
+	const users = await User.query().get();
+	const posts = await Post.query().get();
+
+	return c.json({ users, posts });
+});
 ```
 
 ## ⚠️ Important Limitations

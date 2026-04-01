@@ -5,7 +5,8 @@
  * - Mutating APIs (insert/update/delete, DDL, transactions, attach/detach/sync, save/create, etc.)
  *   must NOT be added. Raw SQL is restricted to SELECT statements only.
  * - A runtime guard rejects non-SELECT SQL (see ensureReadOnlySql/ensureReadOnlySnippet).
- * - Initialization requires a pre-created connection; this library will not open new connections.
+ * - In Workers, Hyperdrive-backed connections are created lazily per request scope.
+ * - Connections are never stored globally and are released by the Worker request lifecycle.
  *
  * Contributor notes:
  * - If you add new raw-SQL entry points, call ensureReadOnlySql/ensureReadOnlySnippet.
@@ -215,14 +216,30 @@ interface LoadBatchItem {
     instances: Eloquent[];
     relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>;
 }
+type HyperdriveBinding = {
+    connectionString: string;
+    host?: string;
+    user?: string;
+    password?: string;
+    database?: string;
+    port?: number | string;
+};
+interface HyperdriveRequestConfig {
+    binding: HyperdriveBinding;
+    connectTimeout: number;
+}
+type HonoLikeContext = Record<PropertyKey, any>;
 interface EloquentRequestContext {
-    connection: any;
+    connection: any | null;
+    connectionInitialization: Promise<any> | null;
+    hyperdrive: HyperdriveRequestConfig | null;
     morphMap: Record<string, typeof Eloquent>;
     loadBatch: LoadBatchItem[];
     loadingPromises: Map<string, Promise<void>>;
     collectionsRegistry: Map<string, Eloquent[]>;
     batchFlushScheduled: boolean;
     automaticallyEagerLoadRelationshipsEnabled: boolean;
+    released: boolean;
 }
 declare class ThroughBuilder {
     private instance;
@@ -237,50 +254,51 @@ declare class Eloquent {
     protected static appends: string[];
     protected static with: string[];
     static connectionStorage: AsyncLocalStorage<EloquentRequestContext>;
+    private static connectionFactory;
     private static registeredMorphMap;
+    private static readonly requestContextSymbol;
     private static createRequestContext;
     private static getContext;
     private static requireContext;
     private static getMorphMap;
+    private static runWithRequestContext;
+    private static attachRequestContext;
+    private static detachRequestContext;
+    private static releaseRequestContext;
+    private static buildMysqlConnectionOptions;
     /**
      * Get the active database connection.
-     * Workers-only: a connection must exist in the active AsyncLocalStorage request context.
+     * Workers-only: create the request-scoped Hyperdrive connection lazily on first use.
      */
-    static getConnection(): any;
+    static getConnection(): Promise<any>;
     /**
-     * Execute a callback within an isolated connection context.
-     * Crucial for Cloudflare Workers where all request-scoped state must remain isolated.
+     * Manual connections are not supported in the Workers-only runtime.
      */
     static withConnection<T>(connection: any, callback: () => Promise<T>, options?: {
         morphs?: Record<string, typeof Eloquent>;
         automaticallyEagerLoadRelationshipsEnabled?: boolean;
     }): Promise<T>;
     /**
-     * Run a callback with a fresh Hyperdrive-backed connection.
+     * Run a callback in a Workers-native Hyperdrive request scope.
      *
-     * Hyperdrive manages the actual MySQL connection pool — opening/closing connections
-     * against it is cheap (just acquiring/returning a slot from the local proxy).
-     * This method opens a per-invocation connection and scopes it via withConnection()
-     * so all queries inside the callback use it. We intentionally do not call
-     * connection.end(): Hyperdrive automatically cleans up the Worker-side client
-     * connection when the invocation ends, while keeping the origin-side pooled
-     * connection alive for reuse.
+     * The mysql2 client is created lazily on the first actual query inside the callback,
+     * reused for the rest of that request scope, and then released naturally with the
+     * Worker request lifecycle. We intentionally do not call connection.end().
      *
      * Usage:
      *   const result = await Eloquent.hyperdrive(env.BACKEND_DB, MODEL_MAPPINGS, async () => {
      *     return await handler.execute(...);
      *   });
      */
-    static hyperdrive<T>(binding: {
-        connectionString: string;
-        host?: string;
-        user?: string;
-        password?: string;
-        database?: string;
-        port?: number | string;
-    }, morphs: Record<string, typeof Eloquent> | undefined, callback: () => Promise<T>, options?: {
+    static hyperdrive<T>(binding: HyperdriveBinding, morphs: Record<string, typeof Eloquent> | undefined, callback: () => Promise<T>, options?: {
         connectTimeout?: number;
     }): Promise<T>;
+    /**
+     * Hono middleware that registers a request-scoped Hyperdrive context for downstream ORM queries.
+     */
+    static honoMiddleware<TContext extends HonoLikeContext>(resolveBinding: (context: TContext) => HyperdriveBinding, morphs?: Record<string, typeof Eloquent>, options?: {
+        connectTimeout?: number;
+    }): (context: TContext, next: () => Promise<unknown>) => Promise<void>;
     protected static rows?: Record<string, any>[];
     /**
      * Check if this model uses Sushi (in-memory array data)

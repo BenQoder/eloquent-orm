@@ -22,27 +22,61 @@ class Model extends Eloquent {
 	static softDeletes?: boolean; // Enable soft delete support
 	static morphClass?: string; // For polymorphic relations
 	static schema?: z.ZodTypeAny; // Zod validation schema
-	static connection: any; // Database connection
 }
 ```
 
 ### Static Methods
 
-#### `init(connection, morphs?)`
+#### `hyperdrive(binding, morphs, callback, options?)`
 
-Initialize the ORM with a database connection.
+Run database work inside a Workers request scope backed by Hyperdrive.
 
 ```typescript
-static async init(
-    connection: any,
-    morphs?: Record<string, typeof Eloquent>
-): Promise<void>
+static async hyperdrive<T>(
+    binding: {
+        connectionString: string;
+        host?: string;
+        user?: string;
+        password?: string;
+        database?: string;
+        port?: number | string;
+    },
+    morphs: Record<string, typeof Eloquent> | undefined,
+    callback: () => Promise<T>,
+    options?: { connectTimeout?: number }
+): Promise<T>
 
 // Usage
-await Eloquent.init(mysqlConnection, {
+await Eloquent.hyperdrive(env.BACKEND_DB, {
     'App\\Models\\Post': Post,
-    'App\\Models\\Video': Video
+    'App\\Models\\Video': Video,
+}, async () => {
+    return await Post.query().with('author').get();
 });
+```
+
+#### `honoMiddleware(resolveBinding, morphs?, options?)`
+
+Create Hono middleware that opens an Eloquent request scope for each request.
+
+```typescript
+static honoMiddleware(
+    resolveBinding: (context: any) => {
+        connectionString: string;
+        host?: string;
+        user?: string;
+        password?: string;
+        database?: string;
+        port?: number | string;
+    },
+    morphs?: Record<string, typeof Eloquent>,
+    options?: { connectTimeout?: number }
+): (context: any, next: () => Promise<unknown>) => Promise<void>
+
+// Usage
+app.use('*', Eloquent.honoMiddleware((c) => c.env.BACKEND_DB, {
+    'App\\Models\\Post': Post,
+}));
 ```
 
 #### `query()`

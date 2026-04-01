@@ -5,7 +5,8 @@
  * - Mutating APIs (insert/update/delete, DDL, transactions, attach/detach/sync, save/create, etc.)
  *   must NOT be added. Raw SQL is restricted to SELECT statements only.
  * - A runtime guard rejects non-SELECT SQL (see ensureReadOnlySql/ensureReadOnlySnippet).
- * - Initialization requires a pre-created connection; this library will not open new connections.
+ * - In Workers, Hyperdrive-backed connections are created lazily per request scope.
+ * - Connections are never stored globally and are released by the Worker request lifecycle.
  *
  * Contributor notes:
  * - If you add new raw-SQL entry points, call ensureReadOnlySql/ensureReadOnlySnippet.
@@ -320,7 +321,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         if ((this.model as any).usesSushi()) {
             return this.aggregateSushi(functionName, column);
         }
-        if (!(this.model as any).usesSushi() && !Eloquent.getConnection()) throw new Error('Database connection not initialized');
+        const connection = await Eloquent.getConnection();
         const table = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
         let sql = `SELECT ${functionName}(${column}) as aggregate FROM ${table}`;
         const allConditions: Condition[] = this.conditions ? JSON.parse(JSON.stringify(this.conditions)) : [];
@@ -354,7 +355,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         this.debugLog('Executing aggregate query', { sql, params: whereClause.params, function: functionName, column });
 
         this.ensureReadOnlySql(sql, 'aggregate');
-        const [rows] = await (Eloquent.getConnection() as any).query(sql, whereClause.params);
+        const [rows] = await connection.query(sql, whereClause.params);
         const result = (rows as any[])?.[0]?.aggregate ?? 0;
 
         // Debug logging - aggregate completed
@@ -1764,10 +1765,6 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
     async first<TExplicit = WithRelations<InstanceType<M>, TWith>>(): Promise<TExplicit | null>;
     async first<TExplicit>(): Promise<TExplicit | null>;
     async first<TExplicit = WithRelations<InstanceType<M>, TWith>>(): Promise<TExplicit | null> {
-        // Check for Sushi first - no database needed
-        if (!(this.model as any).usesSushi() && !Eloquent.getConnection()) {
-            throw new Error('Database connection not initialized');
-        }
         const one = this.clone().limit(1);
         const rows = await one.get();
         const result = (rows as any[])[0] as InstanceType<M> | undefined;
@@ -1871,7 +1868,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             return this.getSushi<TExplicit>();
         }
 
-        if (!Eloquent.getConnection()) throw new Error('Database connection not initialized');
+        const connection = await Eloquent.getConnection();
         const hasUnions = this.unions.length > 0;
         const main = this.buildSelectSql({ includeOrderLimit: !hasUnions });
         let sql = main.sql;
@@ -1896,7 +1893,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             if (this.offsetValue !== undefined) sql += ` OFFSET ${this.offsetValue}`;
         }
         this.ensureReadOnlySql(sql, 'get');
-        const [rows] = await (Eloquent.getConnection() as any).query(sql, allParams);
+        const [rows] = await connection.query(sql, allParams);
         const instances = (rows as any[]).map(row => {
             const instance = new (this.model as any)() as InstanceType<M>;
             // Extract pivot data if requested
@@ -2452,14 +2449,33 @@ interface LoadBatchItem {
     relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>;
 }
 
+type HyperdriveBinding = {
+    connectionString: string;
+    host?: string;
+    user?: string;
+    password?: string;
+    database?: string;
+    port?: number | string;
+};
+
+interface HyperdriveRequestConfig {
+    binding: HyperdriveBinding;
+    connectTimeout: number;
+}
+
+type HonoLikeContext = Record<PropertyKey, any>;
+
 interface EloquentRequestContext {
-    connection: any;
+    connection: any | null;
+    connectionInitialization: Promise<any> | null;
+    hyperdrive: HyperdriveRequestConfig | null;
     morphMap: Record<string, typeof Eloquent>;
     loadBatch: LoadBatchItem[];
     loadingPromises: Map<string, Promise<void>>;
     collectionsRegistry: Map<string, Eloquent[]>;
     batchFlushScheduled: boolean;
     automaticallyEagerLoadRelationshipsEnabled: boolean;
+    released: boolean;
 }
 
 let COLLECTION_ID_COUNTER = 0;
@@ -2495,23 +2511,28 @@ class Eloquent {
     protected static appends: string[] = [];
     protected static with: string[] = [];
     static connectionStorage = new AsyncLocalStorage<EloquentRequestContext>();
+    private static connectionFactory = createConnection;
     private static registeredMorphMap: Record<string, typeof Eloquent> = {};
+    private static readonly requestContextSymbol = Symbol.for('eloquent.requestContext');
 
     private static createRequestContext(
-        connection: any,
         options?: {
             morphs?: Record<string, typeof Eloquent>;
             automaticallyEagerLoadRelationshipsEnabled?: boolean;
+            hyperdrive?: HyperdriveRequestConfig;
         }
     ): EloquentRequestContext {
         return {
-            connection,
+            connection: null,
+            connectionInitialization: null,
+            hyperdrive: options?.hyperdrive || null,
             morphMap: { ...Eloquent.registeredMorphMap, ...(options?.morphs || {}) },
             loadBatch: [],
             loadingPromises: new Map(),
             collectionsRegistry: new Map(),
             batchFlushScheduled: false,
             automaticallyEagerLoadRelationshipsEnabled: options?.automaticallyEagerLoadRelationshipsEnabled ?? false,
+            released: false,
         };
     }
 
@@ -2524,8 +2545,14 @@ class Eloquent {
         if (!context) {
             throw new Error(
                 `No active Eloquent request context for ${operation}. ` +
-                `Wrap database work inside Eloquent.withConnection() or Eloquent.hyperdrive(). ` +
+                `Wrap database work inside Eloquent.hyperdrive(). ` +
                 `Lazy-loading relationships outside that scope is not supported in Workers.`
+            );
+        }
+        if (context.released) {
+            throw new Error(
+                `The active Eloquent Hyperdrive request context has already been released for ${operation}. ` +
+                `Start a new Eloquent.hyperdrive() scope for additional queries.`
             );
         }
         return context;
@@ -2536,17 +2563,118 @@ class Eloquent {
         return context ? context.morphMap : Eloquent.registeredMorphMap;
     }
 
-    /**
-     * Get the active database connection.
-     * Workers-only: a connection must exist in the active AsyncLocalStorage request context.
-     */
-    static getConnection(): any {
-        return Eloquent.requireContext('query execution').connection;
+    private static runWithRequestContext<T>(context: EloquentRequestContext, callback: () => Promise<T>): Promise<T> {
+        return Eloquent.connectionStorage.run(context, callback);
+    }
+
+    private static attachRequestContext(target: HonoLikeContext, context: EloquentRequestContext): void {
+        Object.defineProperty(target, Eloquent.requestContextSymbol, {
+            value: context,
+            enumerable: false,
+            configurable: true,
+            writable: true,
+        });
+    }
+
+    private static detachRequestContext(target: HonoLikeContext): void {
+        delete target[Eloquent.requestContextSymbol];
+    }
+
+    private static releaseRequestContext(context: EloquentRequestContext): void {
+        context.connection = null;
+        context.connectionInitialization = null;
+        context.hyperdrive = null;
+        context.loadBatch.length = 0;
+        context.loadingPromises.clear();
+        context.collectionsRegistry.clear();
+        context.batchFlushScheduled = false;
+        context.released = true;
+    }
+
+    private static buildMysqlConnectionOptions(binding: HyperdriveBinding, connectTimeout: number) {
+        if (binding.host) {
+            return {
+                host: binding.host,
+                user: binding.user,
+                password: binding.password,
+                database: binding.database,
+                port: Number(binding.port) || 3306,
+                disableEval: true,
+                connectTimeout,
+            };
+        }
+
+        try {
+            const url = new URL(binding.connectionString);
+            if (url.protocol === 'mysql:') {
+                const database = url.pathname.replace(/^\/+/, '') || undefined;
+                return {
+                    host: url.hostname,
+                    user: decodeURIComponent(url.username),
+                    password: decodeURIComponent(url.password),
+                    database,
+                    port: Number(url.port) || 3306,
+                    disableEval: true,
+                    connectTimeout,
+                };
+            }
+        } catch {
+            // Fall back to mysql2 URI parsing below if the URL is not parseable.
+        }
+
+        return { uri: binding.connectionString, disableEval: true, connectTimeout };
     }
 
     /**
-     * Execute a callback within an isolated connection context.
-     * Crucial for Cloudflare Workers where all request-scoped state must remain isolated.
+     * Get the active database connection.
+     * Workers-only: create the request-scoped Hyperdrive connection lazily on first use.
+     */
+    static async getConnection(): Promise<any> {
+        const context = Eloquent.requireContext('query execution');
+        if (context.connection) {
+            return context.connection;
+        }
+        if (context.connectionInitialization) {
+            return await context.connectionInitialization;
+        }
+        if (!context.hyperdrive) {
+            throw new Error(
+                'No Hyperdrive binding is available in the active Eloquent request context. ' +
+                'Wrap database work inside Eloquent.hyperdrive().'
+            );
+        }
+
+        let initialization: Promise<any>;
+        initialization = (async () => {
+            const { binding, connectTimeout } = context.hyperdrive!;
+            const connection = await Eloquent.connectionFactory(
+                Eloquent.buildMysqlConnectionOptions(binding, connectTimeout)
+            );
+
+            if (context.released) {
+                throw new Error(
+                    'The active Eloquent Hyperdrive request context was released before the database client finished initializing. ' +
+                    'Start a new Eloquent.hyperdrive() scope for additional queries.'
+                );
+            }
+
+            context.connection = connection;
+            return connection;
+        })();
+
+        context.connectionInitialization = initialization;
+
+        try {
+            return await initialization;
+        } finally {
+            if (context.connectionInitialization === initialization) {
+                context.connectionInitialization = null;
+            }
+        }
+    }
+
+    /**
+     * Manual connections are not supported in the Workers-only runtime.
      */
     static async withConnection<T>(
         connection: any,
@@ -2556,20 +2684,21 @@ class Eloquent {
             automaticallyEagerLoadRelationshipsEnabled?: boolean;
         }
     ): Promise<T> {
-        const context = Eloquent.createRequestContext(connection, options);
-        return Eloquent.connectionStorage.run(context, callback);
+        void connection;
+        void callback;
+        void options;
+        throw new Error(
+            'Eloquent.withConnection() is not supported in the Workers-only runtime. ' +
+            'Wrap queries inside Eloquent.hyperdrive() instead.'
+        );
     }
 
     /**
-     * Run a callback with a fresh Hyperdrive-backed connection.
+     * Run a callback in a Workers-native Hyperdrive request scope.
      *
-     * Hyperdrive manages the actual MySQL connection pool — opening/closing connections
-     * against it is cheap (just acquiring/returning a slot from the local proxy).
-     * This method opens a per-invocation connection and scopes it via withConnection()
-     * so all queries inside the callback use it. We intentionally do not call
-     * connection.end(): Hyperdrive automatically cleans up the Worker-side client
-     * connection when the invocation ends, while keeping the origin-side pooled
-     * connection alive for reuse.
+     * The mysql2 client is created lazily on the first actual query inside the callback,
+     * reused for the rest of that request scope, and then released naturally with the
+     * Worker request lifecycle. We intentionally do not call connection.end().
      *
      * Usage:
      *   const result = await Eloquent.hyperdrive(env.BACKEND_DB, MODEL_MAPPINGS, async () => {
@@ -2577,34 +2706,55 @@ class Eloquent {
      *   });
      */
     static async hyperdrive<T>(
-        binding: { connectionString: string; host?: string; user?: string; password?: string; database?: string; port?: number | string },
+        binding: HyperdriveBinding,
         morphs: Record<string, typeof Eloquent> | undefined,
         callback: () => Promise<T>,
         options?: { connectTimeout?: number }
     ): Promise<T> {
-        // Use individual params when available (Hyperdrive binding exposes host/user/password/database/port).
-        // This avoids parsing the connectionString URI which may contain params mysql2 doesn't
-        // understand (e.g. ssl-mode, sslmode) and could cause warnings or silent misbehaviour.
-        //
-        // connectTimeout (default 10s) prevents the worker from hanging indefinitely when
-        // Hyperdrive's proxy is stale/unresponsive — CF Workers would otherwise cancel the
-        // entire request after 30s with no useful error.
         const connectTimeout = options?.connectTimeout ?? 10000;
-        const connection = await createConnection(
-            binding.host
-                ? {
-                      host: binding.host,
-                      user: binding.user,
-                      password: binding.password,
-                      database: binding.database,
-                      port: Number(binding.port) || 3306,
-                      disableEval: true,
-                      connectTimeout,
-                  }
-                : { uri: binding.connectionString, disableEval: true, connectTimeout }
-        );
+        const context = Eloquent.createRequestContext({
+            morphs,
+            hyperdrive: { binding, connectTimeout },
+        });
 
-        return await Eloquent.withConnection(connection, callback, { morphs });
+        return await Eloquent.runWithRequestContext(context, async () => {
+            try {
+                return await callback();
+            } finally {
+                Eloquent.releaseRequestContext(context);
+            }
+        });
+    }
+
+    /**
+     * Hono middleware that registers a request-scoped Hyperdrive context for downstream ORM queries.
+     */
+    static honoMiddleware<TContext extends HonoLikeContext>(
+        resolveBinding: (context: TContext) => HyperdriveBinding,
+        morphs?: Record<string, typeof Eloquent>,
+        options?: { connectTimeout?: number }
+    ) {
+        return async (context: TContext, next: () => Promise<unknown>): Promise<void> => {
+            const connectTimeout = options?.connectTimeout ?? 10000;
+            const requestContext = Eloquent.createRequestContext({
+                morphs,
+                hyperdrive: {
+                    binding: resolveBinding(context),
+                    connectTimeout,
+                },
+            });
+
+            Eloquent.attachRequestContext(context, requestContext);
+
+            try {
+                await Eloquent.runWithRequestContext(requestContext, async () => {
+                    await next();
+                });
+            } finally {
+                Eloquent.releaseRequestContext(requestContext);
+                Eloquent.detachRequestContext(context);
+            }
+        };
     }
 
     // Sushi support - static array data source (like Laravel's Sushi package)
@@ -2722,7 +2872,10 @@ class Eloquent {
 
         const flushBatch = async () => {
             try {
-                await Eloquent.connectionStorage.run(context, async () => {
+                await Eloquent.runWithRequestContext(context, async () => {
+                    if (context.released || context.loadBatch.length === 0) {
+                        return;
+                    }
                     if (context.loadBatch.length > 0) {
                         await this.flushLoadBatch();
                     }
@@ -2795,7 +2948,7 @@ class Eloquent {
         void morphs;
         throw new Error(
             'Eloquent.init() is not supported in the Workers-only runtime. ' +
-            'Wrap queries inside Eloquent.withConnection() or Eloquent.hyperdrive() instead.'
+            'Wrap queries inside Eloquent.hyperdrive() instead.'
         );
     }
 
@@ -2804,7 +2957,7 @@ class Eloquent {
         void morphs;
         throw new Error(
             'Eloquent.useConnection() is not supported in the Workers-only runtime. ' +
-            'Wrap queries inside Eloquent.withConnection() or Eloquent.hyperdrive() instead.'
+            'Wrap queries inside Eloquent.hyperdrive() instead.'
         );
     }
 
