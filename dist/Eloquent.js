@@ -177,7 +177,7 @@ class QueryBuilder {
         if (this.model.usesSushi()) {
             return this.aggregateSushi(functionName, column);
         }
-        const connection = await Eloquent.getConnection();
+        const connection = await Eloquent.resolveConnection();
         const table = this.tableName || this.model.table || this.model.name.toLowerCase() + 's';
         let sql = `SELECT ${functionName}(${column}) as aggregate FROM ${table}`;
         const allConditions = this.conditions ? JSON.parse(JSON.stringify(this.conditions)) : [];
@@ -1720,7 +1720,7 @@ class QueryBuilder {
         if (this.model.usesSushi()) {
             return this.getSushi();
         }
-        const connection = await Eloquent.getConnection();
+        const connection = await Eloquent.resolveConnection();
         const hasUnions = this.unions.length > 0;
         const main = this.buildSelectSql({ includeOrderLimit: !hasUnions });
         let sql = main.sql;
@@ -2381,7 +2381,7 @@ class Eloquent {
      * Get the active database connection.
      * Workers-only: create the request-scoped Hyperdrive connection lazily on first use.
      */
-    static async getConnection() {
+    static async resolveConnection() {
         const context = Eloquent.requireContext('query execution');
         if (context.connection) {
             return context.connection;

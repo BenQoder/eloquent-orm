@@ -321,7 +321,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         if ((this.model as any).usesSushi()) {
             return this.aggregateSushi(functionName, column);
         }
-        const connection = await Eloquent.getConnection();
+        const connection = await (Eloquent as any).resolveConnection();
         const table = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
         let sql = `SELECT ${functionName}(${column}) as aggregate FROM ${table}`;
         const allConditions: Condition[] = this.conditions ? JSON.parse(JSON.stringify(this.conditions)) : [];
@@ -1868,7 +1868,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             return this.getSushi<TExplicit>();
         }
 
-        const connection = await Eloquent.getConnection();
+        const connection = await (Eloquent as any).resolveConnection();
         const hasUnions = this.unions.length > 0;
         const main = this.buildSelectSql({ includeOrderLimit: !hasUnions });
         let sql = main.sql;
@@ -2629,7 +2629,7 @@ class Eloquent {
      * Get the active database connection.
      * Workers-only: create the request-scoped Hyperdrive connection lazily on first use.
      */
-    static async getConnection(): Promise<any> {
+    private static async resolveConnection(): Promise<any> {
         const context = Eloquent.requireContext('query execution');
         if (context.connection) {
             return context.connection;

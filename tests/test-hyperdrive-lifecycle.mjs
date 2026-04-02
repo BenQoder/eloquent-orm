@@ -130,10 +130,10 @@ async function run() {
     assert.equal(capturedContext?.hyperdrive, null, 'hyperdrive config should be released after callback');
     assert.equal(capturedContext?.released, true, 'request context should be marked released after callback');
 
-    await assert.rejects(
-        Eloquent.getConnection(),
-        /No active Eloquent request context/,
-        'calling getConnection outside a scope should fail'
+    assert.equal(
+        typeof Eloquent.getConnection,
+        'undefined',
+        'raw connection access should not be exposed on the public Eloquent API'
     );
 
     await assert.rejects(

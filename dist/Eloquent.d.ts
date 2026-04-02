@@ -270,7 +270,7 @@ declare class Eloquent {
      * Get the active database connection.
      * Workers-only: create the request-scoped Hyperdrive connection lazily on first use.
      */
-    static getConnection(): Promise<any>;
+    private static resolveConnection;
     /**
      * Manual connections are not supported in the Workers-only runtime.
      */
