@@ -783,6 +783,8 @@ app.get('/dashboard', async (c) => {
 });
 ```
 
+With Hono, a fresh request-scoped mysql2 connection is created lazily on first query and destroyed when the request pipeline finishes.
+
 ## ⚠️ Important Limitations
 
 ### Read-Only Design

@@ -58,6 +58,7 @@ await Eloquent.hyperdrive(env.BACKEND_DB, {
 #### `honoMiddleware(resolveBinding, morphs?, options?)`
 
 Create Hono middleware that opens an Eloquent request scope for each request.
+The mysql2 connection is created lazily on first query and destroyed automatically when the request finishes.
 
 ```typescript
 static honoMiddleware(

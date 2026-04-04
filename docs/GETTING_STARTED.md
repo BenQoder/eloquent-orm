@@ -44,6 +44,8 @@ app.get('/users', async (c) => {
 });
 ```
 
+For Hono requests, the mysql2 connection is still created lazily on first query, then destroyed automatically when the request finishes.
+
 ### 2. Create Your First Model (Mirror Your Laravel Model)
 
 Create a TypeScript model that mirrors your existing Laravel User model:

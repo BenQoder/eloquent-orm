@@ -295,6 +295,7 @@ declare class Eloquent {
     }): Promise<T>;
     /**
      * Hono middleware that registers a request-scoped Hyperdrive context for downstream ORM queries.
+     * The request-scoped mysql2 connection is destroyed when the downstream middleware/handler finishes.
      */
     static honoMiddleware<TContext extends HonoLikeContext>(resolveBinding: (context: TContext) => HyperdriveBinding, morphs?: Record<string, typeof Eloquent>, options?: {
         connectTimeout?: number;

@@ -28,10 +28,19 @@ async function main() {
   const originalFactory = (Eloquent as any).connectionFactory;
   const clientConfigs: any[] = [];
   const openedConnections: Array<{ end: () => Promise<any> }> = [];
+  let destroyCalls = 0;
 
   (Eloquent as any).connectionFactory = async (config: any) => {
     clientConfigs.push(config);
     const connection = await mysql.createConnection(config);
+    let destroyed = false;
+    const originalDestroy = connection.destroy.bind(connection);
+    connection.destroy = () => {
+      if (destroyed) return;
+      destroyed = true;
+      destroyCalls += 1;
+      return originalDestroy();
+    };
     openedConnections.push(connection);
     return connection;
   };
@@ -80,6 +89,7 @@ async function main() {
     assert.equal(Array.isArray(firstPayload.posts), true, 'posts query should return data');
     assert.equal(typeof firstPayload.totalUsers, 'number', 'count query should return a number');
     assert.equal(clientConfigs.length, 1, 'one Hono request should lazily create one mysql2 client');
+    assert.equal(destroyCalls, 1, 'Hono middleware should destroy the request-scoped connection after the request');
     assert.equal(capturedRequestContext.connection, null, 'request-scoped connection should be cleared after request');
     assert.equal(capturedRequestContext.connectionInitialization, null, 'init promise should be cleared after request');
     assert.equal(capturedRequestContext.hyperdrive, null, 'Hyperdrive config should be cleared after request');
@@ -88,6 +98,7 @@ async function main() {
     const secondResponse = await app.fetch(new Request('http://localhost/verify'), env);
     assert.equal(secondResponse.status, 200, 'second Hono request should also succeed');
     assert.equal(clientConfigs.length, 2, 'separate Hono requests should create separate mysql2 clients');
+    assert.equal(destroyCalls, 2, 'each Hono request should destroy its request-scoped connection once');
 
     console.log('Hono middleware demo passed');
   } finally {

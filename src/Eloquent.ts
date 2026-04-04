@@ -2728,6 +2728,7 @@ class Eloquent {
 
     /**
      * Hono middleware that registers a request-scoped Hyperdrive context for downstream ORM queries.
+     * The request-scoped mysql2 connection is destroyed when the downstream middleware/handler finishes.
      */
     static honoMiddleware<TContext extends HonoLikeContext>(
         resolveBinding: (context: TContext) => HyperdriveBinding,
@@ -2751,6 +2752,12 @@ class Eloquent {
                     await next();
                 });
             } finally {
+                if (
+                    requestContext.connection &&
+                    typeof requestContext.connection.destroy === 'function'
+                ) {
+                    requestContext.connection.destroy();
+                }
                 Eloquent.releaseRequestContext(requestContext);
                 Eloquent.detachRequestContext(context);
             }
