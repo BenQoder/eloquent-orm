@@ -765,9 +765,19 @@ await Eloquent.hyperdrive(env.BACKEND_DB, MODEL_MAPPINGS, async () => {
 	// No client is created until the first actual query
 	const users = await User.query().with('posts').get();
 	return users;
+}, {
+	prefixTablesWithDatabase: true,
 });
 
 // The request-scoped client is released when the callback finishes
+```
+
+You can also set global defaults:
+
+```typescript
+Eloquent.setOptions({
+	prefixTablesWithDatabase: true,
+});
 ```
 
 ### Hono Middleware

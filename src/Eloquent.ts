@@ -124,6 +124,18 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         this.model = model;
     }
 
+    private resolveTableName(model: typeof Eloquent = this.model, tableOverride?: string): string {
+        return Eloquent.resolveTableName(model, tableOverride);
+    }
+
+    private prefixTableWithDatabase(table: string): string {
+        return Eloquent.prefixTableWithDatabase(table);
+    }
+
+    private prefixColumnWithDatabase(column: string, allowedTables?: Set<string>): string {
+        return Eloquent.prefixColumnWithDatabase(column, allowedTables);
+    }
+
     table(name: string): this {
         this.tableName = name;
         return this;
@@ -322,7 +334,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             return this.aggregateSushi(functionName, column);
         }
         const connection = await (Eloquent as any).resolveConnection();
-        const table = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
+        const table = this.resolveTableName(this.model, this.tableName);
         let sql = `SELECT ${functionName}(${column}) as aggregate FROM ${table}`;
         const allConditions: Condition[] = this.conditions ? JSON.parse(JSON.stringify(this.conditions)) : [];
 
@@ -804,9 +816,9 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         if (!cfg) {
             throw new Error(`Relationship '${relationName}' does not exist on model ${this.model.name}`);
         }
-        const parentTable = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
+        const parentTable = this.resolveTableName(this.model, this.tableName);
         const RelatedModel = typeof cfg.model === 'string' ? (Eloquent as any).getModelForMorphType(cfg.model) : cfg.model;
-        const relatedTable = (RelatedModel as any).table || RelatedModel.name.toLowerCase() + 's';
+        const relatedTable = this.resolveTableName(RelatedModel);
         const relQB = RelatedModel.query();
         if (callback) callback(relQB);
 
@@ -840,7 +852,9 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             parts.push(`${relatedTable}.${typeColumn} IN (${morphTypes.map(() => '?').join(', ')})`);
             params.push(...morphTypes);
         } else if (cfg.type === 'belongsToMany') {
-            const pivotTable = cfg.table || [this.model.name.toLowerCase(), RelatedModel.name.toLowerCase()].sort().join('_');
+            const pivotTable = this.prefixTableWithDatabase(
+                cfg.table || [this.model.name.toLowerCase(), RelatedModel.name.toLowerCase()].sort().join('_')
+            );
             const fpk = cfg.foreignPivotKey || `${this.model.name.toLowerCase()}_id`;
             const rpk = cfg.relatedPivotKey || `${RelatedModel.name.toLowerCase()}_id`;
             const parentKey = cfg.parentKey || 'id';
@@ -873,7 +887,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
 
         const typeColumn = cfg.typeColumn || `${cfg.morphName}_type`;
         const idColumn = cfg.idColumn || `${cfg.morphName}_id`;
-        const parentTable = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
+        const parentTable = this.resolveTableName(this.model, this.tableName);
 
         // Build array of { morphType: string, model: typeof Eloquent }
         const resolvedTypes = morphTypes.map(t => {
@@ -892,7 +906,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         const allParams: any[] = [];
 
         for (const { morphType, model: RelatedModel } of resolvedTypes) {
-            const relatedTable = (RelatedModel as any).table || RelatedModel.name.toLowerCase() + 's';
+            const relatedTable = this.resolveTableName(RelatedModel);
 
             // Build subquery for this type
             const relQB = RelatedModel.query();
@@ -1027,7 +1041,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
     }
 
     ofMany(column: string, aggregate: 'min' | 'max'): this {
-        const table = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
+        const table = this.resolveTableName(this.model, this.tableName);
 
         // Build the subquery to find the aggregate value
         const subQuery = this.clone();
@@ -1092,7 +1106,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
 
     // BelongsToMany helpers
     private setPivotSource(table: string, alias = 'pivot'): this {
-        if (!this.pivotConfig) this.pivotConfig = { table, alias, columns: new Set<string>() };
+        if (!this.pivotConfig) this.pivotConfig = { table: this.prefixTableWithDatabase(table), alias, columns: new Set<string>() };
         return this;
     }
 
@@ -1437,7 +1451,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             const localKeys = instances.map(inst => inst[localKey]).filter((id: any) => id !== null && id !== undefined);
             if (localKeys.length === 0) return;
             const morphTypes: string[] = (Eloquent as any).getPossibleMorphTypesForModel(model);
-            const relatedTable = (RelatedModel as any).table || RelatedModel.name.toLowerCase() + 's';
+            const relatedTable = this.resolveTableName(RelatedModel);
             const cb = this.withCallbacks && this.withCallbacks[fullPath];
 
             // Use a subquery to find the record with max/min of the column for each parent
@@ -1540,8 +1554,8 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             if (!ThroughModel) {
                 throw new Error(`Through model '${config.through}' not found in morph map`);
             }
-            const relatedTable = (RelatedModel as any).table || RelatedModel.name.toLowerCase() + 's';
-            const throughTable = (ThroughModel as any).table || ThroughModel.name.toLowerCase() + 's';
+            const relatedTable = this.resolveTableName(RelatedModel);
+            const throughTable = this.resolveTableName(ThroughModel);
             const firstKey = config.firstKey || `${model.name.toLowerCase()}_id`;
             const secondKey = config.secondKey || `${ThroughModel.name.toLowerCase()}_id`;
             const localKey = config.localKey || 'id';
@@ -1623,8 +1637,10 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             if (!RelatedModel) {
                 throw new Error(`Model '${config.model}' not found in morph map`);
             }
-            const relatedTable = (RelatedModel as any).table || RelatedModel.name.toLowerCase() + 's';
-            const pivotTable = config.table || [model.name.toLowerCase(), RelatedModel.name.toLowerCase()].sort().join('_');
+            const relatedTable = this.resolveTableName(RelatedModel);
+            const pivotTable = this.prefixTableWithDatabase(
+                config.table || [model.name.toLowerCase(), RelatedModel.name.toLowerCase()].sort().join('_')
+            );
             const fpk = config.foreignPivotKey || `${model.name.toLowerCase()}_id`;
             const rpk = config.relatedPivotKey || `${RelatedModel.name.toLowerCase()}_id`;
             const parentKey = config.parentKey || 'id';
@@ -2202,13 +2218,24 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
 
     private buildSelectSql(options?: { includeOrderLimit?: boolean }): { sql: string; params: any[] } {
         const includeOrderLimit = options?.includeOrderLimit !== false;
-        const table = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
+        const baseTableName = this.tableName || (this.model as any).table || this.model.name.toLowerCase() + 's';
+        const table = this.resolveTableName(this.model, this.tableName);
+        const knownSimpleTables = new Set<string>();
+        if ((Eloquent as any).shouldPrefixTableWithDatabase(baseTableName)) {
+            knownSimpleTables.add(baseTableName.trim());
+        }
         let sql = `SELECT ${this.isDistinct ? 'DISTINCT ' : ''}${this.selectColumns.join(', ')} FROM ${table}`;
         for (const j of this.joins) {
+            if ((Eloquent as any).shouldPrefixTableWithDatabase(j.table)) {
+                knownSimpleTables.add(j.table.trim());
+            }
+            const joinTable = this.prefixTableWithDatabase(j.table);
+            const first = j.first ? this.prefixColumnWithDatabase(j.first, knownSimpleTables) : j.first;
+            const second = j.second ? this.prefixColumnWithDatabase(j.second, knownSimpleTables) : j.second;
             if (j.type === 'cross') {
-                sql += ` CROSS JOIN ${j.table}`;
+                sql += ` CROSS JOIN ${joinTable}`;
             } else {
-                sql += ` ${j.type.toUpperCase()} JOIN ${j.table} ON ${j.first} ${j.operator} ${j.second}`;
+                sql += ` ${j.type.toUpperCase()} JOIN ${joinTable} ON ${first} ${j.operator} ${second}`;
             }
         }
         const allConditions: Condition[] = this.conditions ? JSON.parse(JSON.stringify(this.conditions)) : [];
@@ -2458,9 +2485,20 @@ type HyperdriveBinding = {
     port?: number | string;
 };
 
+type EloquentOptions = {
+    connectTimeout?: number;
+    prefixTablesWithDatabase?: boolean;
+};
+
+type ResolvedEloquentOptions = {
+    connectTimeout: number;
+    prefixTablesWithDatabase: boolean;
+};
+
 interface HyperdriveRequestConfig {
     binding: HyperdriveBinding;
     connectTimeout: number;
+    database?: string;
 }
 
 type HonoLikeContext = Record<PropertyKey, any>;
@@ -2469,6 +2507,7 @@ interface EloquentRequestContext {
     connection: any | null;
     connectionInitialization: Promise<any> | null;
     hyperdrive: HyperdriveRequestConfig | null;
+    options: ResolvedEloquentOptions;
     morphMap: Record<string, typeof Eloquent>;
     loadBatch: LoadBatchItem[];
     loadingPromises: Map<string, Promise<void>>;
@@ -2510,22 +2549,122 @@ class Eloquent {
     protected static hidden: string[] = [];
     protected static appends: string[] = [];
     protected static with: string[] = [];
+    private static options: ResolvedEloquentOptions = {
+        connectTimeout: 10000,
+        prefixTablesWithDatabase: false,
+    };
     static connectionStorage = new AsyncLocalStorage<EloquentRequestContext>();
     private static connectionFactory = createConnection;
     private static registeredMorphMap: Record<string, typeof Eloquent> = {};
     private static readonly requestContextSymbol = Symbol.for('eloquent.requestContext');
+
+    private static resolveOptions(options?: EloquentOptions): ResolvedEloquentOptions {
+        return {
+            connectTimeout: options?.connectTimeout ?? Eloquent.options.connectTimeout,
+            prefixTablesWithDatabase: options?.prefixTablesWithDatabase ?? Eloquent.options.prefixTablesWithDatabase,
+        };
+    }
+
+    private static getActiveOptions(): ResolvedEloquentOptions {
+        return Eloquent.getContext()?.options || Eloquent.options;
+    }
+
+    private static resolveBindingDatabase(binding: HyperdriveBinding): string | undefined {
+        if (binding.database) {
+            return binding.database;
+        }
+
+        try {
+            const url = new URL(binding.connectionString);
+            if (url.protocol === 'mysql:') {
+                return url.pathname.replace(/^\/+/, '') || undefined;
+            }
+        } catch {
+            // Fall back to mysql2 URI parsing below if the URL is not parseable.
+        }
+
+        return undefined;
+    }
+
+    private static getActiveDatabaseName(): string | undefined {
+        return Eloquent.getContext()?.hyperdrive?.database;
+    }
+
+    private static shouldPrefixTableWithDatabase(table: string): boolean {
+        const normalized = table.trim();
+        if (!normalized) return false;
+
+        // Only auto-qualify simple table names. Leave explicit raw SQL,
+        // aliases, joins, and already-qualified names untouched.
+        return /^[A-Za-z0-9_$]+$/.test(normalized);
+    }
+
+    static prefixTableWithDatabase(table: string): string {
+        const options = Eloquent.getActiveOptions();
+        if (!options.prefixTablesWithDatabase) {
+            return table;
+        }
+
+        const database = Eloquent.getActiveDatabaseName();
+        if (!database || !Eloquent.shouldPrefixTableWithDatabase(table)) {
+            return table;
+        }
+
+        return `${database}.${table}`;
+    }
+
+    static prefixColumnWithDatabase(column: string, allowedTables?: Set<string>): string {
+        const options = Eloquent.getActiveOptions();
+        if (!options.prefixTablesWithDatabase) {
+            return column;
+        }
+
+        const database = Eloquent.getActiveDatabaseName();
+        if (!database) {
+            return column;
+        }
+
+        const normalized = column.trim();
+        const match = normalized.match(/^([A-Za-z0-9_$]+)\.([A-Za-z0-9_$*]+)$/);
+        if (!match) {
+            return column;
+        }
+
+        const table = match[1];
+        const field = match[2];
+        if (allowedTables && !allowedTables.has(table)) {
+            return column;
+        }
+
+        return `${database}.${table}.${field}`;
+    }
+
+    static resolveTableName(model: typeof Eloquent, tableOverride?: string): string {
+        const table = tableOverride || (model as any).table || model.name.toLowerCase() + 's';
+        return Eloquent.prefixTableWithDatabase(table);
+    }
+
+    static setOptions(options: EloquentOptions): void {
+        Eloquent.options = Eloquent.resolveOptions(options);
+    }
+
+    static getOptions(): ResolvedEloquentOptions {
+        return { ...Eloquent.options };
+    }
 
     private static createRequestContext(
         options?: {
             morphs?: Record<string, typeof Eloquent>;
             automaticallyEagerLoadRelationshipsEnabled?: boolean;
             hyperdrive?: HyperdriveRequestConfig;
+            eloquentOptions?: EloquentOptions;
         }
     ): EloquentRequestContext {
         return {
             connection: null,
             connectionInitialization: null,
             hyperdrive: options?.hyperdrive || null,
+            options: Eloquent.resolveOptions(options?.eloquentOptions),
             morphMap: { ...Eloquent.registeredMorphMap, ...(options?.morphs || {}) },
             loadBatch: [],
             loadingPromises: new Map(),
@@ -2597,7 +2736,7 @@ class Eloquent {
                 host: binding.host,
                 user: binding.user,
                 password: binding.password,
-                database: binding.database,
+                database: Eloquent.resolveBindingDatabase(binding),
                 port: Number(binding.port) || 3306,
                 disableEval: true,
                 connectTimeout,
@@ -2607,7 +2746,7 @@ class Eloquent {
         try {
             const url = new URL(binding.connectionString);
             if (url.protocol === 'mysql:') {
-                const database = url.pathname.replace(/^\/+/, '') || undefined;
+                const database = Eloquent.resolveBindingDatabase(binding);
                 return {
                     host: url.hostname,
                     user: decodeURIComponent(url.username),
@@ -2709,12 +2848,17 @@ class Eloquent {
         binding: HyperdriveBinding,
         morphs: Record<string, typeof Eloquent> | undefined,
         callback: () => Promise<T>,
-        options?: { connectTimeout?: number }
+        options?: EloquentOptions
     ): Promise<T> {
-        const connectTimeout = options?.connectTimeout ?? 10000;
+        const resolvedOptions = Eloquent.resolveOptions(options);
         const context = Eloquent.createRequestContext({
             morphs,
-            hyperdrive: { binding, connectTimeout },
+            eloquentOptions: resolvedOptions,
+            hyperdrive: {
+                binding,
+                connectTimeout: resolvedOptions.connectTimeout,
+                database: Eloquent.resolveBindingDatabase(binding),
+            },
         });
 
         return await Eloquent.runWithRequestContext(context, async () => {
@@ -2733,15 +2877,18 @@ class Eloquent {
     static honoMiddleware<TContext extends HonoLikeContext>(
         resolveBinding: (context: TContext) => HyperdriveBinding,
         morphs?: Record<string, typeof Eloquent>,
-        options?: { connectTimeout?: number }
+        options?: EloquentOptions
     ) {
         return async (context: TContext, next: () => Promise<unknown>): Promise<void> => {
-            const connectTimeout = options?.connectTimeout ?? 10000;
+            const resolvedOptions = Eloquent.resolveOptions(options);
+            const binding = resolveBinding(context);
             const requestContext = Eloquent.createRequestContext({
                 morphs,
+                eloquentOptions: resolvedOptions,
                 hyperdrive: {
-                    binding: resolveBinding(context),
-                    connectTimeout,
+                    binding,
+                    connectTimeout: resolvedOptions.connectTimeout,
+                    database: Eloquent.resolveBindingDatabase(binding),
                 },
             });
 

@@ -50,6 +50,9 @@ declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith ex
     private static readonly FORBIDDEN_SQL;
     private debugLog;
     constructor(model: M);
+    private resolveTableName;
+    private prefixTableWithDatabase;
+    private prefixColumnWithDatabase;
     table(name: string): this;
     select(...columns: string[]): this;
     addSelect(...columns: string[]): this;
@@ -224,15 +227,25 @@ type HyperdriveBinding = {
     database?: string;
     port?: number | string;
 };
+type EloquentOptions = {
+    connectTimeout?: number;
+    prefixTablesWithDatabase?: boolean;
+};
+type ResolvedEloquentOptions = {
+    connectTimeout: number;
+    prefixTablesWithDatabase: boolean;
+};
 interface HyperdriveRequestConfig {
     binding: HyperdriveBinding;
     connectTimeout: number;
+    database?: string;
 }
 type HonoLikeContext = Record<PropertyKey, any>;
 interface EloquentRequestContext {
     connection: any | null;
     connectionInitialization: Promise<any> | null;
     hyperdrive: HyperdriveRequestConfig | null;
+    options: ResolvedEloquentOptions;
     morphMap: Record<string, typeof Eloquent>;
     loadBatch: LoadBatchItem[];
     loadingPromises: Map<string, Promise<void>>;
@@ -253,10 +266,21 @@ declare class Eloquent {
     protected static hidden: string[];
     protected static appends: string[];
     protected static with: string[];
+    private static options;
     static connectionStorage: AsyncLocalStorage<EloquentRequestContext>;
     private static connectionFactory;
     private static registeredMorphMap;
     private static readonly requestContextSymbol;
+    private static resolveOptions;
+    private static getActiveOptions;
+    private static resolveBindingDatabase;
+    private static getActiveDatabaseName;
+    private static shouldPrefixTableWithDatabase;
+    static prefixTableWithDatabase(table: string): string;
+    static prefixColumnWithDatabase(column: string, allowedTables?: Set<string>): string;
+    static resolveTableName(model: typeof Eloquent, tableOverride?: string): string;
+    static setOptions(options: EloquentOptions): void;
+    static getOptions(): ResolvedEloquentOptions;
     private static createRequestContext;
     private static getContext;
     private static requireContext;
@@ -290,16 +314,12 @@ declare class Eloquent {
      *     return await handler.execute(...);
      *   });
      */
-    static hyperdrive<T>(binding: HyperdriveBinding, morphs: Record<string, typeof Eloquent> | undefined, callback: () => Promise<T>, options?: {
-        connectTimeout?: number;
-    }): Promise<T>;
+    static hyperdrive<T>(binding: HyperdriveBinding, morphs: Record<string, typeof Eloquent> | undefined, callback: () => Promise<T>, options?: EloquentOptions): Promise<T>;
     /**
      * Hono middleware that registers a request-scoped Hyperdrive context for downstream ORM queries.
      * The request-scoped mysql2 connection is destroyed when the downstream middleware/handler finishes.
      */
-    static honoMiddleware<TContext extends HonoLikeContext>(resolveBinding: (context: TContext) => HyperdriveBinding, morphs?: Record<string, typeof Eloquent>, options?: {
-        connectTimeout?: number;
-    }): (context: TContext, next: () => Promise<unknown>) => Promise<void>;
+    static honoMiddleware<TContext extends HonoLikeContext>(resolveBinding: (context: TContext) => HyperdriveBinding, morphs?: Record<string, typeof Eloquent>, options?: EloquentOptions): (context: TContext, next: () => Promise<unknown>) => Promise<void>;
     protected static rows?: Record<string, any>[];
     /**
      * Check if this model uses Sushi (in-memory array data)

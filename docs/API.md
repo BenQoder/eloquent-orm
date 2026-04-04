@@ -43,7 +43,10 @@ static async hyperdrive<T>(
     },
     morphs: Record<string, typeof Eloquent> | undefined,
     callback: () => Promise<T>,
-    options?: { connectTimeout?: number }
+    options?: {
+        connectTimeout?: number;
+        prefixTablesWithDatabase?: boolean;
+    }
 ): Promise<T>
 
 // Usage
@@ -71,13 +74,32 @@ static honoMiddleware(
         port?: number | string;
     },
     morphs?: Record<string, typeof Eloquent>,
-    options?: { connectTimeout?: number }
+    options?: {
+        connectTimeout?: number;
+        prefixTablesWithDatabase?: boolean;
+    }
 ): (context: any, next: () => Promise<unknown>) => Promise<void>
 
 // Usage
 app.use('*', Eloquent.honoMiddleware((c) => c.env.BACKEND_DB, {
     'App\\Models\\Post': Post,
 }));
+```
+
+#### `setOptions(options)`
+
+Set global defaults used by Eloquent request scopes.
+
+```typescript
+static setOptions(options: {
+    connectTimeout?: number;
+    prefixTablesWithDatabase?: boolean;
+}): void
+
+// Usage
+Eloquent.setOptions({
+    prefixTablesWithDatabase: true,
+});
 ```
 
 #### `query()`

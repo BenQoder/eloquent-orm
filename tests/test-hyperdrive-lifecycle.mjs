@@ -23,6 +23,7 @@ const binding = {
 };
 
 const originalFactory = Eloquent.connectionFactory;
+const originalOptions = Eloquent.getOptions();
 
 function installFactory({ delayMs = 0 } = {}) {
     let factoryCalls = 0;
@@ -47,11 +48,11 @@ function installFactory({ delayMs = 0 } = {}) {
                     return [[{ aggregate: 1 }], []];
                 }
 
-                if (sql.includes('FROM users')) {
+                if (sql.includes('FROM db.users') || sql.includes('FROM users')) {
                     return [[{ id: 1, name: 'Alice' }], []];
                 }
 
-                if (sql.includes('FROM posts')) {
+                if (sql.includes('FROM db.posts') || sql.includes('FROM posts')) {
                     return [[{ id: 10, user_id: 1, title: 'Hello from Hyperdrive' }], []];
                 }
 
@@ -74,6 +75,40 @@ function installFactory({ delayMs = 0 } = {}) {
 
 async function run() {
     let tracker = installFactory();
+
+    Eloquent.setOptions({ prefixTablesWithDatabase: true });
+    await Eloquent.hyperdrive(binding, undefined, async () => {
+        assert.equal(
+            User.query().toSql(),
+            'SELECT * FROM db.users',
+            'global options should qualify generated table names'
+        );
+        assert.equal(
+            User.query().join('posts', 'users.id', '=', 'posts.user_id').toSql(),
+            'SELECT * FROM db.users INNER JOIN db.posts ON db.users.id = db.posts.user_id',
+            'simple join tables should be qualified when enabled'
+        );
+        assert.equal(
+            User.query().join('posts as p', 'users.id', '=', 'p.user_id').toSql(),
+            'SELECT * FROM db.users INNER JOIN posts as p ON db.users.id = p.user_id',
+            'aliased join expressions should keep the alias untouched'
+        );
+        assert.equal(
+            User.query().table('analytics.users').toSql(),
+            'SELECT * FROM analytics.users',
+            'already-qualified tables should not be rewritten'
+        );
+    });
+
+    await Eloquent.hyperdrive(binding, undefined, async () => {
+        assert.equal(
+            User.query().toSql(),
+            'SELECT * FROM users',
+            'request-scoped options should override global qualification settings'
+        );
+    }, {
+        prefixTablesWithDatabase: false,
+    });
 
     await Eloquent.hyperdrive(binding, undefined, async () => 'no-op');
     assert.equal(tracker.factoryCalls, 0, 'no query should not create a client');
@@ -148,4 +183,5 @@ try {
     console.log('Hyperdrive lifecycle tests passed');
 } finally {
     Eloquent.connectionFactory = originalFactory;
+    Eloquent.setOptions(originalOptions);
 }
