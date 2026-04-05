@@ -1,3 +1,4 @@
+"use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -872,12 +873,12 @@ __export(Eloquent_exports, {
   QueryBuilder: () => QueryBuilder,
   default: () => Eloquent_default
 });
-import { AsyncLocalStorage } from "async_hooks";
-import { createConnection } from "mysql2/promise";
-var _QueryBuilder, QueryBuilder, Collection, COLLECTION_ID_COUNTER, ThroughBuilder, _Eloquent, Eloquent, Eloquent_default;
+var import_node_async_hooks, import_promise, _QueryBuilder, QueryBuilder, Collection, COLLECTION_ID_COUNTER, ThroughBuilder, _Eloquent, Eloquent, Eloquent_default;
 var init_Eloquent = __esm({
   "src/Eloquent.ts"() {
     "use strict";
+    import_node_async_hooks = require("async_hooks");
+    import_promise = require("mysql2/promise");
     init_relations();
     _QueryBuilder = class _QueryBuilder {
       constructor(model) {
@@ -3806,8 +3807,8 @@ var init_Eloquent = __esm({
       connectTimeout: 1e4,
       prefixTablesWithDatabase: false
     };
-    _Eloquent.connectionStorage = new AsyncLocalStorage();
-    _Eloquent.connectionFactory = createConnection;
+    _Eloquent.connectionStorage = new import_node_async_hooks.AsyncLocalStorage();
+    _Eloquent.connectionFactory = import_promise.createConnection;
     _Eloquent.registeredMorphMap = {};
     _Eloquent.requestContextSymbol = /* @__PURE__ */ Symbol.for("eloquent.requestContext");
     // Debug logging
@@ -3821,13 +3822,31 @@ var init_Eloquent = __esm({
 });
 
 // src/index.ts
+var index_exports = {};
+__export(index_exports, {
+  BelongsTo: () => BelongsTo,
+  BelongsToMany: () => BelongsToMany,
+  Eloquent: () => Eloquent_default,
+  HasMany: () => HasMany,
+  HasManyThrough: () => HasManyThrough,
+  HasOne: () => HasOne,
+  HasOneThrough: () => HasOneThrough,
+  MorphMany: () => MorphMany,
+  MorphOne: () => MorphOne,
+  MorphOneOfMany: () => MorphOneOfMany,
+  MorphTo: () => MorphTo,
+  Relation: () => Relation,
+  default: () => Eloquent_default
+});
+module.exports = __toCommonJS(index_exports);
 init_Eloquent();
 init_Eloquent();
 init_relations();
-export {
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
   BelongsTo,
   BelongsToMany,
-  Eloquent_default as Eloquent,
+  Eloquent,
   HasMany,
   HasManyThrough,
   HasOne,
@@ -3836,7 +3855,6 @@ export {
   MorphOne,
   MorphOneOfMany,
   MorphTo,
-  Relation,
-  Eloquent_default as default
-};
-//# sourceMappingURL=index.js.map
+  Relation
+});
+//# sourceMappingURL=index.cjs.map

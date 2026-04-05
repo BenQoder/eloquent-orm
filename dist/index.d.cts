@@ -1,3 +1,451 @@
+import { z } from 'zod';
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+/**
+ * Base Relation Class
+ *
+ * Abstract base class for all relationship types.
+ * Provides chainable query building and execution methods.
+ */
+
+interface RelationshipConfig {
+    type: string;
+    model: typeof Eloquent | string;
+    foreignKey?: string;
+    localKey?: string;
+    ownerKey?: string;
+    morphName?: string;
+    typeColumn?: string;
+    idColumn?: string;
+    table?: string;
+    foreignPivotKey?: string;
+    relatedPivotKey?: string;
+    parentKey?: string;
+    relatedKey?: string;
+    column?: string;
+    aggregate?: 'min' | 'max';
+    through?: typeof Eloquent;
+    firstKey?: string;
+    secondKey?: string;
+    secondLocalKey?: string;
+}
+declare abstract class Relation<TRelated extends Eloquent = Eloquent> {
+    protected parent: Eloquent;
+    protected related: typeof Eloquent;
+    protected query: QueryBuilder<typeof Eloquent>;
+    abstract readonly type: string;
+    constructor(parent: Eloquent, related: typeof Eloquent);
+    /**
+     * Add the base constraints to the relation query
+     * Subclasses implement this to add WHERE clauses specific to the relationship type
+     */
+    protected abstract addConstraints(): void;
+    /**
+     * Get the relationship configuration for eager loading
+     */
+    abstract getConfig(): RelationshipConfig;
+    /**
+     * Get the results of the relationship
+     */
+    abstract getResults(): Promise<TRelated | TRelated[] | null>;
+    /**
+     * Add a where clause to the query
+     */
+    where(column: string, operatorOrValue?: any, value?: any): this;
+    /**
+     * Add a where in clause to the query
+     */
+    whereIn(column: string, values: any[]): this;
+    /**
+     * Add a where not in clause to the query
+     */
+    whereNotIn(column: string, values: any[]): this;
+    /**
+     * Add a where null clause to the query
+     */
+    whereNull(column: string): this;
+    /**
+     * Add a where not null clause to the query
+     */
+    whereNotNull(column: string): this;
+    /**
+     * Add a raw where clause to the query
+     */
+    whereRaw(sql: string, bindings?: any[]): this;
+    /**
+     * Add an order by clause to the query
+     */
+    orderBy(column: string, direction?: 'asc' | 'desc'): this;
+    /**
+     * Limit the number of results
+     */
+    limit(count: number): this;
+    /**
+     * Skip a number of results
+     */
+    offset(count: number): this;
+    /**
+     * Select specific columns
+     */
+    select(...columns: string[]): this;
+    /**
+     * Execute the query and get all results
+     */
+    get(): Promise<Collection<TRelated>>;
+    /**
+     * Execute the query and get the first result
+     */
+    first(): Promise<TRelated | null>;
+    /**
+     * Get the count of related records
+     */
+    count(): Promise<number>;
+    /**
+     * Check if any related records exist
+     */
+    exists(): Promise<boolean>;
+    /**
+     * Get the underlying query builder
+     */
+    getQuery(): QueryBuilder<typeof Eloquent>;
+    /**
+     * Get the parent model instance
+     */
+    getParent(): Eloquent;
+    /**
+     * Get the related model class
+     */
+    getRelated(): typeof Eloquent;
+}
+
+/**
+ * HasMany Relation Class
+ *
+ * Represents a one-to-many relationship where the parent has many related records.
+ * Example: User hasMany Posts (posts table has user_id foreign key)
+ */
+
+declare class HasMany<TRelated extends Eloquent = Eloquent> extends Relation<TRelated> {
+    readonly type = "hasMany";
+    protected foreignKey: string;
+    protected localKey: string;
+    constructor(parent: Eloquent, related: typeof Eloquent, foreignKey: string, localKey?: string);
+    /**
+     * Add the base constraints - filter by parent's local key
+     */
+    protected addConstraints(): void;
+    /**
+     * Get the relationship configuration for eager loading
+     */
+    getConfig(): RelationshipConfig;
+    /**
+     * Get the results of the relationship
+     */
+    getResults(): Promise<TRelated[]>;
+    /**
+     * Get all results as a collection
+     */
+    get(): Promise<Collection<TRelated>>;
+}
+
+/**
+ * HasOne Relation Class
+ *
+ * Represents a one-to-one relationship where the parent has one related record.
+ * Example: User hasOne Profile (profiles table has user_id foreign key)
+ */
+
+declare class HasOne<TRelated extends Eloquent = Eloquent> extends Relation<TRelated> {
+    readonly type = "hasOne";
+    protected foreignKey: string;
+    protected localKey: string;
+    constructor(parent: Eloquent, related: typeof Eloquent, foreignKey: string, localKey?: string);
+    /**
+     * Add the base constraints - filter by parent's local key
+     */
+    protected addConstraints(): void;
+    /**
+     * Get the relationship configuration for eager loading
+     */
+    getConfig(): RelationshipConfig;
+    /**
+     * Get the results of the relationship (single record or null)
+     */
+    getResults(): Promise<TRelated | null>;
+}
+
+/**
+ * BelongsTo Relation Class
+ *
+ * Represents an inverse one-to-one or one-to-many relationship.
+ * Example: Post belongsTo User (posts table has user_id foreign key)
+ */
+
+declare class BelongsTo<TRelated extends Eloquent = Eloquent> extends Relation<TRelated> {
+    readonly type = "belongsTo";
+    protected foreignKey: string;
+    protected ownerKey: string;
+    constructor(parent: Eloquent, related: typeof Eloquent, foreignKey: string, ownerKey?: string);
+    /**
+     * Add the base constraints - filter by the foreign key value
+     */
+    protected addConstraints(): void;
+    /**
+     * Get the relationship configuration for eager loading
+     */
+    getConfig(): RelationshipConfig;
+    /**
+     * Get the results of the relationship (single record or null)
+     */
+    getResults(): Promise<TRelated | null>;
+}
+
+/**
+ * BelongsToMany Relation Class
+ *
+ * Represents a many-to-many relationship through a pivot table.
+ * Example: User belongsToMany Roles (through user_roles pivot table)
+ */
+
+declare class BelongsToMany<TRelated extends Eloquent = Eloquent> extends Relation<TRelated> {
+    readonly type = "belongsToMany";
+    protected pivotColumns: string[];
+    protected table?: string;
+    protected foreignPivotKey?: string;
+    protected relatedPivotKey?: string;
+    protected parentKey: string;
+    protected relatedKey: string;
+    constructor(parent: Eloquent, related: typeof Eloquent, table?: string, foreignPivotKey?: string, relatedPivotKey?: string, parentKey?: string, relatedKey?: string);
+    /**
+     * Add the base constraints - join through pivot table
+     */
+    protected addConstraints(): void;
+    /**
+     * Get the relationship configuration for eager loading
+     */
+    getConfig(): RelationshipConfig;
+    /**
+     * Get the results of the relationship
+     */
+    getResults(): Promise<TRelated[]>;
+    /**
+     * Specify which pivot columns to include
+     */
+    withPivot(...columns: string[]): this;
+    /**
+     * Get the pivot table name
+     */
+    protected getPivotTable(): string;
+    /**
+     * Get the related model's table name
+     */
+    protected getRelatedTable(): string;
+    /**
+     * Get the foreign pivot key
+     */
+    protected getForeignPivotKey(): string;
+    /**
+     * Get the related pivot key
+     */
+    protected getRelatedPivotKey(): string;
+}
+
+/**
+ * MorphMany Relation Class
+ *
+ * Represents a polymorphic one-to-many relationship.
+ * Example: Post morphMany Comments (comments table has commentable_type and commentable_id)
+ */
+
+declare class MorphMany<TRelated extends Eloquent = Eloquent> extends Relation<TRelated> {
+    protected morphName: string;
+    protected localKey: string;
+    readonly type = "morphMany";
+    protected typeColumn: string;
+    protected idColumn: string;
+    constructor(parent: Eloquent, related: typeof Eloquent, morphName: string, typeColumn?: string, idColumn?: string, localKey?: string);
+    /**
+     * Add the base constraints - filter by morph type and id
+     */
+    protected addConstraints(): void;
+    /**
+     * Get the relationship configuration for eager loading
+     */
+    getConfig(): RelationshipConfig;
+    /**
+     * Get the results of the relationship
+     */
+    getResults(): Promise<TRelated[]>;
+    /**
+     * Get possible morph type values for the parent model
+     */
+    protected getMorphTypes(): string[];
+}
+
+/**
+ * MorphOne Relation Class
+ *
+ * Represents a polymorphic one-to-one relationship.
+ * Example: Post morphOne Image (images table has imageable_type and imageable_id)
+ */
+
+/**
+ * Base class for morph-one type relationships
+ */
+declare abstract class MorphOneBase<TRelated extends Eloquent = Eloquent> extends Relation<TRelated> {
+    protected morphName: string;
+    protected localKey: string;
+    protected typeColumn: string;
+    protected idColumn: string;
+    constructor(parent: Eloquent, related: typeof Eloquent, morphName: string, typeColumn?: string, idColumn?: string, localKey?: string);
+    /**
+     * Add the base constraints - filter by morph type and id
+     */
+    protected addConstraints(): void;
+    /**
+     * Get the related model's table name
+     */
+    protected getRelatedTable(): string;
+    /**
+     * Get possible morph type values for the parent model
+     */
+    protected getMorphTypes(): string[];
+}
+declare class MorphOne<TRelated extends Eloquent = Eloquent> extends MorphOneBase<TRelated> {
+    readonly type = "morphOne";
+    /**
+     * Get the relationship configuration for eager loading
+     */
+    getConfig(): RelationshipConfig;
+    /**
+     * Get the results of the relationship (single record or null)
+     */
+    getResults(): Promise<TRelated | null>;
+}
+
+/**
+ * MorphTo Relation Class
+ *
+ * Represents the inverse of a polymorphic relationship.
+ * Example: Comment morphTo commentable (can be Post, Video, etc.)
+ */
+
+declare class MorphTo<TRelated extends Eloquent = Eloquent> extends Relation<TRelated> {
+    protected morphName: string;
+    readonly type = "morphTo";
+    protected typeColumn: string;
+    protected idColumn: string;
+    constructor(parent: Eloquent, morphName: string, typeColumn?: string, idColumn?: string);
+    /**
+     * Add the base constraints - filter by the id value
+     */
+    protected addConstraints(): void;
+    /**
+     * Get the relationship configuration for eager loading
+     */
+    getConfig(): RelationshipConfig;
+    /**
+     * Get the results of the relationship (single record or null)
+     */
+    getResults(): Promise<TRelated | null>;
+    /**
+     * Resolve the related model class from a morph type string
+     */
+    protected static resolveRelatedModel(typeValue: string): typeof Eloquent | null;
+}
+
+/**
+ * MorphOneOfMany Relation Class
+ *
+ * Represents a polymorphic one-of-many relationship with aggregation.
+ * Used for latestMorphOne and oldestMorphOne patterns.
+ * Example: Post latestMorphOne Status (get the most recent status)
+ */
+
+declare class MorphOneOfMany<TRelated extends Eloquent = Eloquent> extends MorphOneBase<TRelated> {
+    protected column: string;
+    protected aggregate: 'min' | 'max';
+    readonly type = "morphOneOfMany";
+    constructor(parent: Eloquent, related: typeof Eloquent, morphName: string, column?: string, aggregate?: 'min' | 'max', typeColumn?: string, idColumn?: string, localKey?: string);
+    /**
+     * Add the base constraints - filter by morph type/id and aggregate
+     */
+    protected addConstraints(): void;
+    /**
+     * Get the relationship configuration for eager loading
+     */
+    getConfig(): RelationshipConfig;
+    /**
+     * Get the results of the relationship (single record or null)
+     */
+    getResults(): Promise<TRelated | null>;
+}
+
+/**
+ * HasManyThrough Relation Class
+ *
+ * Represents a has-many-through relationship.
+ * Example: Country hasManyThrough Posts through Users
+ * (countries -> users -> posts)
+ */
+
+/**
+ * Base class for through relationships
+ */
+declare abstract class ThroughRelation<TRelated extends Eloquent = Eloquent> extends Relation<TRelated> {
+    protected through: typeof Eloquent;
+    protected firstKey?: string | undefined;
+    protected secondKey?: string | undefined;
+    protected localKey: string;
+    protected secondLocalKey: string;
+    constructor(parent: Eloquent, related: typeof Eloquent, through: typeof Eloquent, firstKey?: string | undefined, secondKey?: string | undefined, localKey?: string, secondLocalKey?: string);
+    /**
+     * Add the base constraints - join through intermediate table
+     */
+    protected addConstraints(): void;
+    /**
+     * Get the related model's table name
+     */
+    protected getRelatedTable(): string;
+    /**
+     * Get the through model's table name
+     */
+    protected getThroughTable(): string;
+    /**
+     * Get the first key (on the through table, pointing to parent)
+     */
+    protected getFirstKey(): string;
+    /**
+     * Get the second key (on the related table, pointing to through)
+     */
+    protected getSecondKey(): string;
+}
+declare class HasManyThrough<TRelated extends Eloquent = Eloquent> extends ThroughRelation<TRelated> {
+    readonly type = "hasManyThrough";
+    /**
+     * Get the relationship configuration for eager loading
+     */
+    getConfig(): RelationshipConfig;
+    /**
+     * Get the results of the relationship
+     */
+    getResults(): Promise<TRelated[]>;
+}
+/**
+ * HasOneThrough - returns single record through intermediate table
+ */
+declare class HasOneThrough<TRelated extends Eloquent = Eloquent> extends ThroughRelation<TRelated> {
+    readonly type = "hasOneThrough";
+    /**
+     * Get the relationship configuration for eager loading
+     */
+    getConfig(): RelationshipConfig;
+    /**
+     * Get the results of the relationship (single record or null)
+     */
+    getResults(): Promise<TRelated | null>;
+}
+
 /**
  * READ-ONLY ORM (Intentional Design)
  *
@@ -15,9 +463,7 @@
  *
  * @readonly
  */
-import type { z } from 'zod';
-import { AsyncLocalStorage } from 'node:async_hooks';
-import { HasMany, HasOne, BelongsTo, BelongsToMany, MorphMany, MorphOne, MorphTo, MorphOneOfMany, HasManyThrough, HasOneThrough } from './relations';
+
 type RelationsOf<T> = T extends {
     relationsTypes: infer RT;
 } ? RT : {};
@@ -419,6 +865,5 @@ declare class Eloquent {
     private static parseRelationNames;
     private static parseFullRelationNames;
 }
-export default Eloquent;
-export { QueryBuilder, Collection };
-//# sourceMappingURL=Eloquent.d.ts.map
+
+export { BelongsTo, BelongsToMany, Eloquent, HasMany, HasManyThrough, HasOne, HasOneThrough, MorphMany, MorphOne, MorphOneOfMany, MorphTo, Relation, type RelationshipConfig, Eloquent as default };

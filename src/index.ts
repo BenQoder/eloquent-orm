@@ -1,3 +1,4 @@
+export { default } from './Eloquent';
 export { default as Eloquent } from './Eloquent';
 
 // Export Relation classes
