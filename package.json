@@ -1,6 +1,6 @@
 {
     "name": "@benqoder/eloquent-orm",
-    "version": "0.6.1",
+    "version": "0.6.2",
     "description": "A powerful, type-safe, read-only ORM for TypeScript that allows Node.js applications to access Laravel databases with full Eloquent-style querying",
     "keywords": [
         "orm",
