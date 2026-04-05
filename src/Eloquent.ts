@@ -17,7 +17,7 @@
  */
 import type { z } from 'zod';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { createConnection } from 'mysql2/promise';
+import { createConnection } from './mysql2-promise';
 
 // Import Relation classes
 import {

@@ -1,7 +1,9 @@
 "use strict";
+var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
@@ -18,7 +20,25 @@ var __copyProps = (to, from, except, desc) => {
   }
   return to;
 };
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+// src/mysql2-promise.ts
+var mysql2Promise, createConnection2;
+var init_mysql2_promise = __esm({
+  "src/mysql2-promise.ts"() {
+    "use strict";
+    mysql2Promise = __toESM(require("mysql2/promise"), 1);
+    createConnection2 = mysql2Promise.createConnection;
+  }
+});
 
 // src/relations/Relation.ts
 var Relation;
@@ -873,12 +893,12 @@ __export(Eloquent_exports, {
   QueryBuilder: () => QueryBuilder,
   default: () => Eloquent_default
 });
-var import_node_async_hooks, import_promise, _QueryBuilder, QueryBuilder, Collection, COLLECTION_ID_COUNTER, ThroughBuilder, _Eloquent, Eloquent, Eloquent_default;
+var import_node_async_hooks, _QueryBuilder, QueryBuilder, Collection, COLLECTION_ID_COUNTER, ThroughBuilder, _Eloquent, Eloquent, Eloquent_default;
 var init_Eloquent = __esm({
   "src/Eloquent.ts"() {
     "use strict";
     import_node_async_hooks = require("async_hooks");
-    import_promise = require("mysql2/promise");
+    init_mysql2_promise();
     init_relations();
     _QueryBuilder = class _QueryBuilder {
       constructor(model) {
@@ -3808,7 +3828,7 @@ var init_Eloquent = __esm({
       prefixTablesWithDatabase: false
     };
     _Eloquent.connectionStorage = new import_node_async_hooks.AsyncLocalStorage();
-    _Eloquent.connectionFactory = import_promise.createConnection;
+    _Eloquent.connectionFactory = createConnection2;
     _Eloquent.registeredMorphMap = {};
     _Eloquent.requestContextSymbol = /* @__PURE__ */ Symbol.for("eloquent.requestContext");
     // Debug logging

@@ -19,6 +19,16 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
+// src/mysql2-promise.ts
+import * as mysql2Promise from "mysql2/promise";
+var createConnection2;
+var init_mysql2_promise = __esm({
+  "src/mysql2-promise.ts"() {
+    "use strict";
+    createConnection2 = mysql2Promise.createConnection;
+  }
+});
+
 // src/relations/Relation.ts
 var Relation;
 var init_Relation = __esm({
@@ -873,11 +883,11 @@ __export(Eloquent_exports, {
   default: () => Eloquent_default
 });
 import { AsyncLocalStorage } from "async_hooks";
-import { createConnection } from "mysql2/promise";
 var _QueryBuilder, QueryBuilder, Collection, COLLECTION_ID_COUNTER, ThroughBuilder, _Eloquent, Eloquent, Eloquent_default;
 var init_Eloquent = __esm({
   "src/Eloquent.ts"() {
     "use strict";
+    init_mysql2_promise();
     init_relations();
     _QueryBuilder = class _QueryBuilder {
       constructor(model) {
@@ -3807,7 +3817,7 @@ var init_Eloquent = __esm({
       prefixTablesWithDatabase: false
     };
     _Eloquent.connectionStorage = new AsyncLocalStorage();
-    _Eloquent.connectionFactory = createConnection;
+    _Eloquent.connectionFactory = createConnection2;
     _Eloquent.registeredMorphMap = {};
     _Eloquent.requestContextSymbol = /* @__PURE__ */ Symbol.for("eloquent.requestContext");
     // Debug logging
