@@ -85,7 +85,14 @@ type RelationTypes<T, K extends string> = {
 type StripColumns<S extends string> = S extends `${infer R}:${string}` ? R : S;
 type BaseRelationName<S extends string> = StripColumns<S> extends `${infer R}.${string}` ? R : StripColumns<S>;
 
-type Condition = { operator: 'AND' | 'OR'; type: 'basic'; conditionOperator: string; column: string; value: any } | { operator: 'AND' | 'OR'; type: 'in' | 'not_in'; column: string; value: any[] } | { operator: 'AND' | 'OR'; type: 'null' | 'not_null'; column: string } | { operator: 'AND' | 'OR'; type: 'between' | 'not_between'; column: string; value: [any, any] } | { operator: 'AND' | 'OR'; type: 'raw'; sql: string; bindings: any[] } | { operator: 'AND' | 'OR'; group: Condition[] };
+type Condition =
+    | { operator: 'AND' | 'OR'; type: 'basic'; conditionOperator: string; column: string; value: any }
+    | { operator: 'AND' | 'OR'; type: 'column'; conditionOperator: string; first: string; second: string }
+    | { operator: 'AND' | 'OR'; type: 'in' | 'not_in'; column: string; value: any[] }
+    | { operator: 'AND' | 'OR'; type: 'null' | 'not_null'; column: string }
+    | { operator: 'AND' | 'OR'; type: 'between' | 'not_between'; column: string; value: [any, any] }
+    | { operator: 'AND' | 'OR'; type: 'raw'; sql: string; bindings: any[] }
+    | { operator: 'AND' | 'OR'; group: Condition[] };
 
 class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends string = never> {
     private model: M;
@@ -378,16 +385,19 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
 
     where(column: string, value: any): this;
     where(column: string, operator: string, value: any): this;
+    where(conditions: Record<string, any>): this;
     where(callback: (query: QueryBuilder<any>) => void): this;
-    where(columnOrCallback: string | ((query: QueryBuilder<any>) => void), operatorOrValue?: any, value?: any): this {
+    where(columnOrCallback: string | Record<string, any> | ((query: QueryBuilder<any>) => void), operatorOrValue?: any, value?: any): this {
         if (typeof columnOrCallback === 'function') {
             const subQuery = new QueryBuilder<any>(this.model);
             (columnOrCallback as (query: QueryBuilder<any>) => void)(subQuery);
             if (subQuery.conditions.length > 0) {
                 this.conditions.push({ operator: 'AND', group: subQuery.conditions });
             }
+        } else if (this.isPlainWhereObject(columnOrCallback)) {
+            this.addObjectWheres('AND', columnOrCallback);
         } else {
-            const column = columnOrCallback;
+            const column = columnOrCallback as string;
             let conditionOperator: string;
             let val: any;
             if (value !== undefined) {
@@ -397,21 +407,30 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 conditionOperator = '=';
                 val = operatorOrValue;
             }
-            this.conditions.push({ operator: 'AND', type: 'basic', conditionOperator, column, value: val });
+            this.addValueWhere('AND', column, conditionOperator, val);
         }
         return this;
     }
 
     orWhere(column: string, value: any): this;
     orWhere(column: string, operator: string, value: any): this;
+    orWhere(conditions: Record<string, any>): this;
     orWhere(callback: (query: QueryBuilder<any>) => void): this;
-    orWhere(columnOrCallback: string | ((query: QueryBuilder<any>) => void), operatorOrValue?: any, value?: any): this {
+    orWhere(columnOrCallback: string | Record<string, any> | ((query: QueryBuilder<any>) => void), operatorOrValue?: any, value?: any): this {
         if (typeof columnOrCallback === 'function') {
             const subQuery = new QueryBuilder<any>(this.model);
             (columnOrCallback as (query: QueryBuilder<any>) => void)(subQuery);
-            this.conditions.push({ operator: 'OR', group: subQuery.conditions });
+            if (subQuery.conditions.length > 0) {
+                this.conditions.push({ operator: 'OR', group: subQuery.conditions });
+            }
+        } else if (this.isPlainWhereObject(columnOrCallback)) {
+            const subQuery = new QueryBuilder<any>(this.model);
+            subQuery.addObjectWheres('AND', columnOrCallback);
+            if (subQuery.conditions.length > 0) {
+                this.conditions.push({ operator: 'OR', group: subQuery.conditions });
+            }
         } else {
-            const column = columnOrCallback;
+            const column = columnOrCallback as string;
             let conditionOperator: string;
             let val: any;
             if (value !== undefined) {
@@ -421,9 +440,51 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 conditionOperator = '=';
                 val = operatorOrValue;
             }
-            this.conditions.push({ operator: 'OR', type: 'basic', conditionOperator, column, value: val });
+            this.addValueWhere('OR', column, conditionOperator, val);
         }
         return this;
+    }
+
+    whereKey(id: any | any[]): this {
+        const keyName = this.getQualifiedKeyName();
+        return Array.isArray(id) ? this.whereIn(keyName, id) : this.where(keyName, id);
+    }
+
+    whereKeyNot(id: any | any[]): this {
+        const keyName = this.getQualifiedKeyName();
+        return Array.isArray(id) ? this.whereNotIn(keyName, id) : this.where(keyName, '!=', id);
+    }
+
+    private addObjectWheres(operator: 'AND' | 'OR', conditions: Record<string, any>): void {
+        for (const [column, val] of Object.entries(conditions)) {
+            this.addValueWhere(operator, column, '=', val);
+        }
+    }
+
+    private addValueWhere(operator: 'AND' | 'OR', column: string, conditionOperator: string, val: any): void {
+        if (val === null || val === undefined) {
+            this.conditions.push({
+                operator,
+                type: conditionOperator === '!=' || conditionOperator === '<>' ? 'not_null' : 'null',
+                column,
+            });
+            return;
+        }
+
+        if (Array.isArray(val) && conditionOperator === '=') {
+            this.conditions.push({ operator, type: 'in', column, value: val });
+            return;
+        }
+
+        this.conditions.push({ operator, type: 'basic', conditionOperator, column, value: val });
+    }
+
+    private isPlainWhereObject(value: unknown): value is Record<string, any> {
+        return value !== null && typeof value === 'object' && !Array.isArray(value);
+    }
+
+    private getQualifiedKeyName(): string {
+        return (this.model as any).primaryKey || (this.model as any).keyName || 'id';
     }
 
     whereIn(column: string, values: any[]): this {
@@ -787,6 +848,49 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
     }
 
     withCount(relations: string | string[] | Record<string, (query: QueryBuilder) => void>): this {
+        const list = this.normalizeAggregateRelations(relations);
+        for (const item of list) {
+            const count = this.buildCountSubquery(item.name, item.cb);
+            const alias = `${item.name.replace(/\./g, '_')}_count`;
+            this.selectRaw(`(${count.sql}) as ${alias}`, count.params);
+        }
+        return this;
+    }
+
+    withAggregate(
+        relations: string | string[] | Record<string, (query: QueryBuilder) => void>,
+        column: string,
+        functionName: 'SUM' | 'AVG' | 'MIN' | 'MAX' | string,
+    ): this {
+        const aggregate = functionName.toUpperCase();
+        const list = this.normalizeAggregateRelations(relations);
+        for (const item of list) {
+            const query = this.buildAggregateSubquery(item.name, column, aggregate, item.cb);
+            const alias = `${item.name.replace(/\./g, '_')}_${aggregate.toLowerCase()}_${column.replace(/[^A-Za-z0-9_]+/g, '_')}`;
+            this.selectRaw(`(${query.sql}) as ${alias}`, query.params);
+        }
+        return this;
+    }
+
+    withSum(relations: string | string[] | Record<string, (query: QueryBuilder) => void>, column: string): this {
+        return this.withAggregate(relations, column, 'SUM');
+    }
+
+    withAvg(relations: string | string[] | Record<string, (query: QueryBuilder) => void>, column: string): this {
+        return this.withAggregate(relations, column, 'AVG');
+    }
+
+    withMin(relations: string | string[] | Record<string, (query: QueryBuilder) => void>, column: string): this {
+        return this.withAggregate(relations, column, 'MIN');
+    }
+
+    withMax(relations: string | string[] | Record<string, (query: QueryBuilder) => void>, column: string): this {
+        return this.withAggregate(relations, column, 'MAX');
+    }
+
+    private normalizeAggregateRelations(
+        relations: string | string[] | Record<string, (query: QueryBuilder) => void>,
+    ): Array<{ name: string, cb?: (q: QueryBuilder) => void }> {
         const list: Array<{ name: string, cb?: (q: QueryBuilder) => void }> = [];
         if (typeof relations === 'string') {
             list.push({ name: relations });
@@ -795,19 +899,28 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         } else if (relations && typeof relations === 'object') {
             for (const [name, cb] of Object.entries(relations)) list.push({ name, cb });
         }
-        for (const item of list) {
-            const count = this.buildCountSubquery(item.name, item.cb);
-            const alias = `${item.name.replace(/\./g, '_')}_count`;
-            // Push a placeholder for params to keep them bound correctly
-            this.selectRaw(`(${count.sql}) as ${alias}`, count.params);
-        }
-        return this;
+        return list;
     }
 
     private buildCountSubquery(relation: string, callback?: (query: QueryBuilder) => void): { sql: string, params: any[] } {
         const exists = this.buildHasSubquery(relation, callback, true);
         // convert SELECT 1 ... to SELECT COUNT(*) ... by replacing prefix
         const sql = exists.sql.replace(/^SELECT\s+1\s+/i, 'SELECT COUNT(*) ');
+        return { sql, params: exists.params };
+    }
+
+    private buildAggregateSubquery(
+        relation: string,
+        column: string,
+        functionName: string,
+        callback?: (query: QueryBuilder) => void,
+    ): { sql: string, params: any[] } {
+        this.ensureReadOnlySnippet(column, 'withAggregate column');
+        if (!/^[A-Z_][A-Z0-9_]*$/i.test(functionName)) {
+            throw new Error(`Invalid aggregate function name: ${functionName}`);
+        }
+        const exists = this.buildHasSubquery(relation, callback, true);
+        const sql = exists.sql.replace(/^SELECT\s+1\s+/i, `SELECT ${functionName}(${column}) `);
         return { sql, params: exists.params };
     }
 
@@ -1744,6 +1857,8 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             } else if (cond.type === 'basic') {
                 sql += `${cond.column} ${(cond as { conditionOperator: string }).conditionOperator} ?`;
                 params.push(cond.value);
+            } else if (cond.type === 'column') {
+                sql += `${cond.first} ${cond.conditionOperator} ${cond.second}`;
             } else if (cond.type === 'in') {
                 const values: any[] = cond.value || [];
                 if (values.length === 0) {
@@ -1837,42 +1952,16 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
     }
 
     whereColumn(first: string, operatorOrSecond: string, second?: string): this {
-        if (second === undefined) {
-            // Two arguments: column1, column2 (equals)
-            this.conditions.push({
-                operator: 'AND',
-                type: 'raw',
-                sql: `${first} = ${operatorOrSecond}`,
-                bindings: []
-            });
-        } else {
-            // Three arguments: column1, operator, column2
-            this.conditions.push({
-                operator: 'AND',
-                type: 'raw',
-                sql: `${first} ${operatorOrSecond} ${second}`,
-                bindings: []
-            });
-        }
+        const conditionOperator = second === undefined ? '=' : operatorOrSecond;
+        const rightColumn = second === undefined ? operatorOrSecond : second;
+        this.conditions.push({ operator: 'AND', type: 'column', conditionOperator, first, second: rightColumn });
         return this;
     }
 
     orWhereColumn(first: string, operatorOrSecond: string, second?: string): this {
-        if (second === undefined) {
-            this.conditions.push({
-                operator: 'OR',
-                type: 'raw',
-                sql: `${first} = ${operatorOrSecond}`,
-                bindings: []
-            });
-        } else {
-            this.conditions.push({
-                operator: 'OR',
-                type: 'raw',
-                sql: `${first} ${operatorOrSecond} ${second}`,
-                bindings: []
-            });
-        }
+        const conditionOperator = second === undefined ? '=' : operatorOrSecond;
+        const rightColumn = second === undefined ? operatorOrSecond : second;
+        this.conditions.push({ operator: 'OR', type: 'column', conditionOperator, first, second: rightColumn });
         return this;
     }
 
@@ -2153,22 +2242,10 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             case 'basic': {
                 const op = (cond as any).conditionOperator;
                 const target = cond.value;
-                switch (op) {
-                    case '=': return value == target;
-                    case '!=': case '<>': return value != target;
-                    case '>': return value > target;
-                    case '>=': return value >= target;
-                    case '<': return value < target;
-                    case '<=': return value <= target;
-                    case 'LIKE': case 'like': {
-                        if (typeof value !== 'string' || typeof target !== 'string') return false;
-                        // Convert SQL LIKE to regex
-                        const pattern = target.replace(/%/g, '.*').replace(/_/g, '.');
-                        return new RegExp(`^${pattern}$`, 'i').test(value);
-                    }
-                    default: return value == target;
-                }
+                return this.compareSushiValues(value, op, target);
             }
+            case 'column':
+                return this.compareSushiValues(row[cond.first], cond.conditionOperator, row[cond.second]);
             case 'in':
                 return Array.isArray(cond.value) && cond.value.includes(value);
             case 'not_in':
@@ -2183,6 +2260,24 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 return value < cond.value[0] || value > cond.value[1];
             default:
                 return true;
+        }
+    }
+
+    private compareSushiValues(value: any, op: string, target: any): boolean {
+        switch (op) {
+            case '=': return value == target;
+            case '!=': case '<>': return value != target;
+            case '>': return value > target;
+            case '>=': return value >= target;
+            case '<': return value < target;
+            case '<=': return value <= target;
+            case 'LIKE': case 'like': {
+                if (typeof value !== 'string' || typeof target !== 'string') return false;
+                // Convert SQL LIKE to regex
+                const pattern = target.replace(/%/g, '.*').replace(/_/g, '.');
+                return new RegExp(`^${pattern}$`, 'i').test(value);
+            }
+            default: return value == target;
         }
     }
 

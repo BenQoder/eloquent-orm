@@ -331,6 +331,48 @@ async function testSushiOrWhere() {
   assertEquals(usOrCanada.length, 2, 'orWhere returns US and Canada');
 }
 
+async function testSushiLaravelStylePredicates() {
+  console.log('\n--- TEST: Sushi Laravel-style predicates ---');
+
+  const european67m = await Country.query()
+    .where({ continent: 'Europe', population: 67000000 })
+    .get();
+  assertEquals(european67m.length, 2, 'object-form where applies AND equality predicates');
+
+  class CountryWithNull extends Eloquent {
+    protected static table = 'countries_with_null';
+    protected static rows = [
+      { id: 1, name: 'Test1', capital: 'Capital1' },
+      { id: 2, name: 'Test2', capital: null },
+      { id: 3, name: 'Test3', capital: 'Capital3' },
+    ];
+  }
+
+  const noCapital = await CountryWithNull.query().where({ capital: null }).get();
+  assertEquals(noCapital.length, 1, 'object-form where treats null as IS NULL');
+
+  const usOrEurope = await Country.query()
+    .where('code', 'US')
+    .orWhere({ continent: 'Europe', population: 83000000 })
+    .get();
+  assertEquals(usOrEurope.length, 2, 'object-form orWhere groups predicates together');
+
+  const keyed = await Country.query().whereKey([1, 2, 3]).get();
+  assertEquals(keyed.length, 3, 'whereKey accepts arrays');
+
+  const notKeyed = await Country.query().whereKeyNot(1).get();
+  assertEquals(notKeyed.length, 9, 'whereKeyNot excludes a single key');
+
+  const roles = await Role.query().whereColumn('level', '>', 'id').get();
+  assertEquals(roles.length, 4, 'whereColumn compares two row columns');
+
+  const aggregateSql = State.query().withSum('country', 'population').toSql();
+  assert(
+    aggregateSql.includes('(SELECT SUM(population) FROM countries WHERE countries.id = states.country_id) as country_sum_population'),
+    'withSum adds a relation aggregate projection',
+  );
+}
+
 async function testSushiUsesSushi() {
   console.log('\n--- TEST: usesSushi() detection ---');
 
@@ -405,6 +447,7 @@ async function main() {
     await testSushiWhereNull();
     await testSushiWhereBetween();
     await testSushiOrWhere();
+    await testSushiLaravelStylePredicates();
     await testSushiUsesSushi();
     await testSushiAsyncGetRows();
 
@@ -422,4 +465,8 @@ async function main() {
   }
 }
 
-main();
+Eloquent.hyperdrive(
+  { connectionString: 'mysql://sushi:sushi@127.0.0.1/sushi' },
+  {},
+  main,
+);

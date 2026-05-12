@@ -538,10 +538,18 @@ declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith ex
     private aggregate;
     where(column: string, value: any): this;
     where(column: string, operator: string, value: any): this;
+    where(conditions: Record<string, any>): this;
     where(callback: (query: QueryBuilder<any>) => void): this;
     orWhere(column: string, value: any): this;
     orWhere(column: string, operator: string, value: any): this;
+    orWhere(conditions: Record<string, any>): this;
     orWhere(callback: (query: QueryBuilder<any>) => void): this;
+    whereKey(id: any | any[]): this;
+    whereKeyNot(id: any | any[]): this;
+    private addObjectWheres;
+    private addValueWhere;
+    private isPlainWhereObject;
+    private getQualifiedKeyName;
     whereIn(column: string, values: any[]): this;
     whereNotIn(column: string, values: any[]): this;
     orWhereIn(column: string, values: any[]): this;
@@ -589,7 +597,14 @@ declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith ex
     has(relation: string, operator?: string, count?: number): this;
     orHas(relation: string, operator?: string, count?: number): this;
     withCount(relations: string | string[] | Record<string, (query: QueryBuilder) => void>): this;
+    withAggregate(relations: string | string[] | Record<string, (query: QueryBuilder) => void>, column: string, functionName: 'SUM' | 'AVG' | 'MIN' | 'MAX' | string): this;
+    withSum(relations: string | string[] | Record<string, (query: QueryBuilder) => void>, column: string): this;
+    withAvg(relations: string | string[] | Record<string, (query: QueryBuilder) => void>, column: string): this;
+    withMin(relations: string | string[] | Record<string, (query: QueryBuilder) => void>, column: string): this;
+    withMax(relations: string | string[] | Record<string, (query: QueryBuilder) => void>, column: string): this;
+    private normalizeAggregateRelations;
     private buildCountSubquery;
+    private buildAggregateSubquery;
     private buildHasSubquery;
     private buildHasMorphSubquery;
     with<K extends string>(relations: K | K[] | Record<K, string[] | ((query: QueryBuilder<any>) => void)>, callback?: (query: QueryBuilder<any>) => void): QueryBuilder<M, TWith | K>;
@@ -645,6 +660,7 @@ declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith ex
      * Evaluate a single condition against a Sushi row
      */
     private evaluateSushiCondition;
+    private compareSushiValues;
     /**
      * Apply orderBy to Sushi rows (in-memory sorting)
      */

@@ -1122,6 +1122,8 @@ var init_Eloquent = __esm({
           if (subQuery.conditions.length > 0) {
             this.conditions.push({ operator: "AND", group: subQuery.conditions });
           }
+        } else if (this.isPlainWhereObject(columnOrCallback)) {
+          this.addObjectWheres("AND", columnOrCallback);
         } else {
           const column = columnOrCallback;
           let conditionOperator;
@@ -1133,7 +1135,7 @@ var init_Eloquent = __esm({
             conditionOperator = "=";
             val = operatorOrValue;
           }
-          this.conditions.push({ operator: "AND", type: "basic", conditionOperator, column, value: val });
+          this.addValueWhere("AND", column, conditionOperator, val);
         }
         return this;
       }
@@ -1141,7 +1143,15 @@ var init_Eloquent = __esm({
         if (typeof columnOrCallback === "function") {
           const subQuery = new _QueryBuilder(this.model);
           columnOrCallback(subQuery);
-          this.conditions.push({ operator: "OR", group: subQuery.conditions });
+          if (subQuery.conditions.length > 0) {
+            this.conditions.push({ operator: "OR", group: subQuery.conditions });
+          }
+        } else if (this.isPlainWhereObject(columnOrCallback)) {
+          const subQuery = new _QueryBuilder(this.model);
+          subQuery.addObjectWheres("AND", columnOrCallback);
+          if (subQuery.conditions.length > 0) {
+            this.conditions.push({ operator: "OR", group: subQuery.conditions });
+          }
         } else {
           const column = columnOrCallback;
           let conditionOperator;
@@ -1153,9 +1163,43 @@ var init_Eloquent = __esm({
             conditionOperator = "=";
             val = operatorOrValue;
           }
-          this.conditions.push({ operator: "OR", type: "basic", conditionOperator, column, value: val });
+          this.addValueWhere("OR", column, conditionOperator, val);
         }
         return this;
+      }
+      whereKey(id) {
+        const keyName = this.getQualifiedKeyName();
+        return Array.isArray(id) ? this.whereIn(keyName, id) : this.where(keyName, id);
+      }
+      whereKeyNot(id) {
+        const keyName = this.getQualifiedKeyName();
+        return Array.isArray(id) ? this.whereNotIn(keyName, id) : this.where(keyName, "!=", id);
+      }
+      addObjectWheres(operator, conditions) {
+        for (const [column, val] of Object.entries(conditions)) {
+          this.addValueWhere(operator, column, "=", val);
+        }
+      }
+      addValueWhere(operator, column, conditionOperator, val) {
+        if (val === null || val === void 0) {
+          this.conditions.push({
+            operator,
+            type: conditionOperator === "!=" || conditionOperator === "<>" ? "not_null" : "null",
+            column
+          });
+          return;
+        }
+        if (Array.isArray(val) && conditionOperator === "=") {
+          this.conditions.push({ operator, type: "in", column, value: val });
+          return;
+        }
+        this.conditions.push({ operator, type: "basic", conditionOperator, column, value: val });
+      }
+      isPlainWhereObject(value) {
+        return value !== null && typeof value === "object" && !Array.isArray(value);
+      }
+      getQualifiedKeyName() {
+        return this.model.primaryKey || this.model.keyName || "id";
       }
       whereIn(column, values) {
         this.conditions.push({ operator: "AND", type: "in", column, value: values });
@@ -1461,6 +1505,37 @@ var init_Eloquent = __esm({
         return this.orWhereHas(relation, void 0, operator, count);
       }
       withCount(relations) {
+        const list = this.normalizeAggregateRelations(relations);
+        for (const item of list) {
+          const count = this.buildCountSubquery(item.name, item.cb);
+          const alias = `${item.name.replace(/\./g, "_")}_count`;
+          this.selectRaw(`(${count.sql}) as ${alias}`, count.params);
+        }
+        return this;
+      }
+      withAggregate(relations, column, functionName) {
+        const aggregate = functionName.toUpperCase();
+        const list = this.normalizeAggregateRelations(relations);
+        for (const item of list) {
+          const query = this.buildAggregateSubquery(item.name, column, aggregate, item.cb);
+          const alias = `${item.name.replace(/\./g, "_")}_${aggregate.toLowerCase()}_${column.replace(/[^A-Za-z0-9_]+/g, "_")}`;
+          this.selectRaw(`(${query.sql}) as ${alias}`, query.params);
+        }
+        return this;
+      }
+      withSum(relations, column) {
+        return this.withAggregate(relations, column, "SUM");
+      }
+      withAvg(relations, column) {
+        return this.withAggregate(relations, column, "AVG");
+      }
+      withMin(relations, column) {
+        return this.withAggregate(relations, column, "MIN");
+      }
+      withMax(relations, column) {
+        return this.withAggregate(relations, column, "MAX");
+      }
+      normalizeAggregateRelations(relations) {
         const list = [];
         if (typeof relations === "string") {
           list.push({ name: relations });
@@ -1469,16 +1544,20 @@ var init_Eloquent = __esm({
         } else if (relations && typeof relations === "object") {
           for (const [name, cb] of Object.entries(relations)) list.push({ name, cb });
         }
-        for (const item of list) {
-          const count = this.buildCountSubquery(item.name, item.cb);
-          const alias = `${item.name.replace(/\./g, "_")}_count`;
-          this.selectRaw(`(${count.sql}) as ${alias}`, count.params);
-        }
-        return this;
+        return list;
       }
       buildCountSubquery(relation, callback) {
         const exists = this.buildHasSubquery(relation, callback, true);
         const sql = exists.sql.replace(/^SELECT\s+1\s+/i, "SELECT COUNT(*) ");
+        return { sql, params: exists.params };
+      }
+      buildAggregateSubquery(relation, column, functionName, callback) {
+        this.ensureReadOnlySnippet(column, "withAggregate column");
+        if (!/^[A-Z_][A-Z0-9_]*$/i.test(functionName)) {
+          throw new Error(`Invalid aggregate function name: ${functionName}`);
+        }
+        const exists = this.buildHasSubquery(relation, callback, true);
+        const sql = exists.sql.replace(/^SELECT\s+1\s+/i, `SELECT ${functionName}(${column}) `);
         return { sql, params: exists.params };
       }
       buildHasSubquery(relationName, callback, isCount = false) {
@@ -2314,6 +2393,8 @@ var init_Eloquent = __esm({
           } else if (cond.type === "basic") {
             sql += `${cond.column} ${cond.conditionOperator} ?`;
             params.push(cond.value);
+          } else if (cond.type === "column") {
+            sql += `${cond.first} ${cond.conditionOperator} ${cond.second}`;
           } else if (cond.type === "in") {
             const values = cond.value || [];
             if (values.length === 0) {
@@ -2393,39 +2474,15 @@ var init_Eloquent = __esm({
         throw new Error("Execution halted by dd()");
       }
       whereColumn(first, operatorOrSecond, second) {
-        if (second === void 0) {
-          this.conditions.push({
-            operator: "AND",
-            type: "raw",
-            sql: `${first} = ${operatorOrSecond}`,
-            bindings: []
-          });
-        } else {
-          this.conditions.push({
-            operator: "AND",
-            type: "raw",
-            sql: `${first} ${operatorOrSecond} ${second}`,
-            bindings: []
-          });
-        }
+        const conditionOperator = second === void 0 ? "=" : operatorOrSecond;
+        const rightColumn = second === void 0 ? operatorOrSecond : second;
+        this.conditions.push({ operator: "AND", type: "column", conditionOperator, first, second: rightColumn });
         return this;
       }
       orWhereColumn(first, operatorOrSecond, second) {
-        if (second === void 0) {
-          this.conditions.push({
-            operator: "OR",
-            type: "raw",
-            sql: `${first} = ${operatorOrSecond}`,
-            bindings: []
-          });
-        } else {
-          this.conditions.push({
-            operator: "OR",
-            type: "raw",
-            sql: `${first} ${operatorOrSecond} ${second}`,
-            bindings: []
-          });
-        }
+        const conditionOperator = second === void 0 ? "=" : operatorOrSecond;
+        const rightColumn = second === void 0 ? operatorOrSecond : second;
+        this.conditions.push({ operator: "OR", type: "column", conditionOperator, first, second: rightColumn });
         return this;
       }
       async get() {
@@ -2640,30 +2697,10 @@ var init_Eloquent = __esm({
           case "basic": {
             const op = cond.conditionOperator;
             const target = cond.value;
-            switch (op) {
-              case "=":
-                return value == target;
-              case "!=":
-              case "<>":
-                return value != target;
-              case ">":
-                return value > target;
-              case ">=":
-                return value >= target;
-              case "<":
-                return value < target;
-              case "<=":
-                return value <= target;
-              case "LIKE":
-              case "like": {
-                if (typeof value !== "string" || typeof target !== "string") return false;
-                const pattern = target.replace(/%/g, ".*").replace(/_/g, ".");
-                return new RegExp(`^${pattern}$`, "i").test(value);
-              }
-              default:
-                return value == target;
-            }
+            return this.compareSushiValues(value, op, target);
           }
+          case "column":
+            return this.compareSushiValues(row[cond.first], cond.conditionOperator, row[cond.second]);
           case "in":
             return Array.isArray(cond.value) && cond.value.includes(value);
           case "not_in":
@@ -2678,6 +2715,31 @@ var init_Eloquent = __esm({
             return value < cond.value[0] || value > cond.value[1];
           default:
             return true;
+        }
+      }
+      compareSushiValues(value, op, target) {
+        switch (op) {
+          case "=":
+            return value == target;
+          case "!=":
+          case "<>":
+            return value != target;
+          case ">":
+            return value > target;
+          case ">=":
+            return value >= target;
+          case "<":
+            return value < target;
+          case "<=":
+            return value <= target;
+          case "LIKE":
+          case "like": {
+            if (typeof value !== "string" || typeof target !== "string") return false;
+            const pattern = target.replace(/%/g, ".*").replace(/_/g, ".");
+            return new RegExp(`^${pattern}$`, "i").test(value);
+          }
+          default:
+            return value == target;
         }
       }
       /**
