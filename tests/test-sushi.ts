@@ -28,6 +28,10 @@ class Country extends Eloquent {
       ? `${(pop / 1000000000).toFixed(1)}B`
       : `${(pop / 1000000).toFixed(0)}M`;
   }
+
+  static scopeEuropean(query: any) {
+    return query.where('continent', 'Europe');
+  }
 }
 
 class State extends Eloquent {
@@ -371,6 +375,28 @@ async function testSushiLaravelStylePredicates() {
     aggregateSql.includes('(SELECT SUM(population) FROM countries WHERE countries.id = states.country_id) as country_sum_population'),
     'withSum adds a relation aggregate projection',
   );
+
+  const europe = await (Country.query() as any).european().get();
+  assertEquals(europe.length, 3, 'scopeX methods are callable directly as query methods');
+
+  Eloquent.registerReadHelper('summaryLabel', model => `${(model as any).code}:${(model as any).name}`);
+  const us = await Country.query().whereKey(1).first() as any;
+  assertEquals(us.summaryLabel(), 'US:United States', 'registered read helpers are exposed on fetched models');
+  Eloquent.clearReadHelpers();
+
+  class CastedSetting extends Eloquent {
+    protected static table = 'casted_settings';
+    static inferCasts = true;
+    protected static rows = [
+      { id: '1', enabled: '1', options: '{"mode":"fast"}', created_at: '2026-05-12T00:00:00.000Z' },
+    ];
+  }
+
+  const casted = await CastedSetting.query().first() as any;
+  assertEquals(typeof casted.id, 'number', 'inferCasts converts integer strings');
+  assertEquals(casted.enabled, true, 'inferCasts converts boolean strings');
+  assertEquals(casted.options.mode, 'fast', 'inferCasts converts JSON strings');
+  assert(casted.created_at instanceof Date, 'inferCasts converts date-like fields');
 }
 
 async function testSushiUsesSushi() {

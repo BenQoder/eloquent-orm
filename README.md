@@ -24,6 +24,8 @@ A powerful, type-safe, read-only ORM for TypeScript that allows you to access La
 - **Migration Management**: Database schema changes and migrations remain in your Laravel backend
 - **Business Logic**: All write operations, validations, and business logic stay in Laravel
 
+The fetch-only surface is guarded by `npm run test:fetch-surface`; see [Read-Only Fetch Surface](docs/READ_ONLY_FETCH_SURFACE.md).
+
 ## 🏗️ Architecture Pattern
 
 This ORM enables a clean separation of concerns in multi-service architectures:

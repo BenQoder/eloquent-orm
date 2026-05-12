@@ -930,6 +930,32 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             throw new Error(`Relationship '${relationName}' does not exist on model ${this.model.name}`);
         }
         const parentTable = this.resolveTableName(this.model, this.tableName);
+        if (cfg.type === 'morphTo') {
+            const name = cfg.morphName;
+            const typeColumn = cfg.typeColumn || `${name}_type`;
+            const idColumn = cfg.idColumn || `${name}_id`;
+            const morphMap = (Eloquent as any).getMorphMap?.() ?? {};
+            const morphEntries = Object.entries(morphMap) as Array<[string, typeof Eloquent]>;
+            if (morphEntries.length === 0) {
+                return { sql: 'SELECT 1 WHERE 0=1', params: [] };
+            }
+
+            const params: any[] = [];
+            const morphParts: string[] = [];
+            for (const [morphType, ModelCtor] of morphEntries) {
+                const targetTable = this.resolveTableName(ModelCtor);
+                const targetQB = (ModelCtor as any).query();
+                if (callback) callback(targetQB);
+                const targetConditions: Condition[] = (targetQB as any).conditions
+                    ? JSON.parse(JSON.stringify((targetQB as any).conditions))
+                    : [];
+                const targetWhere = this.buildWhereClause(targetConditions);
+                const targetWhereSql = targetWhere.sql ? ` AND ${targetWhere.sql}` : '';
+                morphParts.push(`(${parentTable}.${typeColumn} = ? AND EXISTS (SELECT 1 FROM ${targetTable} WHERE ${targetTable}.id = ${parentTable}.${idColumn}${targetWhereSql}))`);
+                params.push(morphType, ...targetWhere.params);
+            }
+            return { sql: `SELECT 1 WHERE ${morphParts.join(' OR ')}`, params };
+        }
         const RelatedModel = typeof cfg.model === 'string' ? (Eloquent as any).getModelForMorphType(cfg.model) : cfg.model;
         const relatedTable = this.resolveTableName(RelatedModel);
         const relQB = RelatedModel.query();
@@ -955,7 +981,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             const foreignKey = cfg.foreignKey;
             const ownerKey = cfg.ownerKey || 'id';
             parts.push(`${relatedTable}.${ownerKey} = ${parentTable}.${foreignKey}`);
-        } else if (cfg.type === 'morphMany' || cfg.type === 'morphOne') {
+        } else if (cfg.type === 'morphMany' || cfg.type === 'morphOne' || cfg.type === 'morphOneOfMany') {
             const name = cfg.morphName;
             const typeColumn = cfg.typeColumn || `${name}_type`;
             const idColumn = cfg.idColumn || `${name}_id`;
@@ -964,6 +990,23 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             parts.push(`${relatedTable}.${idColumn} = ${parentTable}.${localKey}`);
             parts.push(`${relatedTable}.${typeColumn} IN (${morphTypes.map(() => '?').join(', ')})`);
             params.push(...morphTypes);
+        } else if (cfg.type === 'hasManyThrough' || cfg.type === 'hasOneThrough') {
+            const ThroughModel = typeof cfg.through === 'string'
+                ? (Eloquent as any).getModelForMorphType(cfg.through)
+                : cfg.through;
+            if (!ThroughModel) {
+                throw new Error(`Through model '${cfg.through}' not found in morph map`);
+            }
+            const throughTable = this.resolveTableName(ThroughModel);
+            const firstKey = cfg.firstKey || `${this.model.name.toLowerCase()}_id`;
+            const secondKey = cfg.secondKey || `${ThroughModel.name.toLowerCase()}_id`;
+            const localKey = cfg.localKey || 'id';
+            const secondLocalKey = cfg.secondLocalKey || 'id';
+            const join = `FROM ${relatedTable} JOIN ${throughTable} ON ${relatedTable}.${secondKey} = ${throughTable}.${secondLocalKey}`;
+            const link = `${throughTable}.${firstKey} = ${parentTable}.${localKey}`;
+            const whereSql = where.sql ? ` AND ${where.sql}` : '';
+            const sql = `SELECT 1 ${join} WHERE ${link}${whereSql}`;
+            return { sql, params: [...where.params] };
         } else if (cfg.type === 'belongsToMany') {
             const pivotTable = this.prefixTableWithDatabase(
                 cfg.table || [this.model.name.toLowerCase(), RelatedModel.name.toLowerCase()].sort().join('_')
@@ -979,7 +1022,6 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             const sql = `SELECT 1 ${join} WHERE ${link}${whereSql}`;
             return { sql, params: [...where.params] };
         } else {
-            // morphTo and others not supported yet here
             return { sql: 'SELECT 1 WHERE 0=1', params: [] };
         }
         const whereSql = where.sql ? ` AND ${where.sql}` : '';
@@ -1217,6 +1259,22 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         return all;
     }
 
+    private applyEagerConstraints(
+        query: QueryBuilder<any>,
+        fullPath: string,
+        requiredColumns: string[] = [],
+    ): void {
+        const columns = this.withColumns?.[fullPath];
+        if (columns && columns.length > 0) {
+            query.select(...Array.from(new Set([...requiredColumns, ...columns])));
+        }
+
+        const callback = this.withCallbacks?.[fullPath];
+        if (callback) {
+            callback(query);
+        }
+    }
+
     // BelongsToMany helpers
     private setPivotSource(table: string, alias = 'pivot'): this {
         if (!this.pivotConfig) this.pivotConfig = { table: this.prefixTableWithDatabase(table), alias, columns: new Set<string>() };
@@ -1263,17 +1321,64 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                 return parseFloat(value);
             case 'boolean':
             case 'bool':
+                if (typeof value === 'string') {
+                    return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+                }
                 return Boolean(value);
             case 'string':
                 return String(value);
+            case 'date':
             case 'datetime':
+            case 'timestamp':
                 return new Date(value);
             case 'array':
             case 'json':
-                return typeof value === 'string' ? JSON.parse(value) : value;
+            case 'object':
+                if (typeof value !== 'string') return value;
+                try {
+                    return JSON.parse(value);
+                } catch {
+                    return value;
+                }
             default:
                 return value;
         }
+    }
+
+    private getModelCasts(rows?: Record<string, any>[]): Record<string, string> | undefined {
+        const explicit = (this.model as any).casts;
+        if (explicit) {
+            return explicit;
+        }
+
+        if (!(this.model as any).inferCasts) {
+            return undefined;
+        }
+
+        const sample = rows?.find(row => row && typeof row === 'object');
+        if (!sample) {
+            return undefined;
+        }
+
+        const inferred: Record<string, string> = {};
+        for (const [key, value] of Object.entries(sample)) {
+            if (value === null || value === undefined || typeof value !== 'string') {
+                continue;
+            }
+            if (/^(true|false)$/i.test(value) || (/^(0|1)$/.test(value) && /(^is_|^has_|enabled$|active$|published$|visible$)/i.test(key))) {
+                inferred[key] = 'boolean';
+            } else if (/^-?\d+$/.test(value)) {
+                inferred[key] = 'integer';
+            } else if (/^-?\d+\.\d+$/.test(value)) {
+                inferred[key] = 'float';
+            } else if ((value.startsWith('{') && value.endsWith('}')) || (value.startsWith('[') && value.endsWith(']'))) {
+                inferred[key] = 'json';
+            } else if (/(^|_)(at|date|time)$/.test(key) && !Number.isNaN(Date.parse(value))) {
+                inferred[key] = 'datetime';
+            }
+        }
+
+        return Object.keys(inferred).length > 0 ? inferred : undefined;
     }
 
     async loadRelations(instances: any[], relations: string[], model?: typeof Eloquent, prefix?: string) {
@@ -1372,10 +1477,9 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             const ownerKey = config.ownerKey || 'id';
             const foreignKeys = instances.map(inst => inst[foreignKey]).filter(id => id !== null && id !== undefined);
             if (foreignKeys.length === 0) return;
-            const cb = this.withCallbacks && this.withCallbacks[fullPath];
             const relatedInstances = await this.getInBatches(foreignKeys, async (chunk) => {
                 const qb = RelatedModel.query().whereIn(ownerKey, chunk);
-                if (cb) cb(qb);
+                this.applyEagerConstraints(qb, fullPath, [ownerKey]);
                 return qb.get();
             });
             // Share a collection among related instances for nested propagation
@@ -1409,10 +1513,9 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             const localKey = config.localKey || 'id';
             const localKeys = instances.map(inst => inst[localKey]).filter(id => id !== null && id !== undefined);
             if (localKeys.length === 0) return;
-            const cb = this.withCallbacks && this.withCallbacks[fullPath];
             const relatedInstances = await this.getInBatches(localKeys, async (chunk) => {
                 const qb = RelatedModel.query().whereIn(foreignKey, chunk);
-                if (cb) cb(qb);
+                this.applyEagerConstraints(qb, fullPath, [foreignKey]);
                 return qb.get();
             });
             const relatedCollection = new Collection<any>();
@@ -1449,10 +1552,9 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             const localKey = config.localKey || 'id';
             const localKeys = instances.map(inst => inst[localKey]).filter(id => id !== null && id !== undefined);
             if (localKeys.length === 0) return;
-            const cb = this.withCallbacks && this.withCallbacks[fullPath];
             const relatedInstances = await this.getInBatches(localKeys, async (chunk) => {
                 const qb = RelatedModel.query().whereIn(foreignKey, chunk);
-                if (cb) cb(qb);
+                this.applyEagerConstraints(qb, fullPath, [foreignKey]);
                 return qb.get();
             });
             const relatedCollection = new Collection<any>();
@@ -1486,10 +1588,9 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             const localKeys = instances.map(inst => inst[localKey]).filter((id: any) => id !== null && id !== undefined);
             if (localKeys.length === 0) return;
             const morphTypes: string[] = (Eloquent as any).getPossibleMorphTypesForModel(model);
-            const cb = this.withCallbacks && this.withCallbacks[fullPath];
             const relatedInstances = await this.getInBatches(localKeys, async (chunk) => {
                 const qb = RelatedModel.query().whereIn(typeColumn, morphTypes).whereIn(idColumn, chunk);
-                if (cb) cb(qb);
+                this.applyEagerConstraints(qb, fullPath, [typeColumn, idColumn]);
                 return qb.get();
             });
             const relatedCollection = new Collection<any>();
@@ -1523,10 +1624,9 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             const localKeys = instances.map(inst => inst[localKey]).filter((id: any) => id !== null && id !== undefined);
             if (localKeys.length === 0) return;
             const morphTypes: string[] = (Eloquent as any).getPossibleMorphTypesForModel(model);
-            const cb = this.withCallbacks && this.withCallbacks[fullPath];
             const relatedInstances = await this.getInBatches(localKeys, async (chunk) => {
                 const qb = RelatedModel.query().whereIn(typeColumn, morphTypes).whereIn(idColumn, chunk);
-                if (cb) cb(qb);
+                this.applyEagerConstraints(qb, fullPath, [typeColumn, idColumn]);
                 return qb.get();
             });
             const relatedCollection = new Collection<any>();
@@ -1565,7 +1665,6 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             if (localKeys.length === 0) return;
             const morphTypes: string[] = (Eloquent as any).getPossibleMorphTypesForModel(model);
             const relatedTable = this.resolveTableName(RelatedModel);
-            const cb = this.withCallbacks && this.withCallbacks[fullPath];
 
             // Use a subquery to find the record with max/min of the column for each parent
             const relatedInstances = await this.getInBatches(localKeys, async (chunk) => {
@@ -1578,7 +1677,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                         WHERE sub.${typeColumn} = ${relatedTable}.${typeColumn}
                         AND sub.${idColumn} = ${relatedTable}.${idColumn}
                     )`);
-                if (cb) cb(qb);
+                this.applyEagerConstraints(qb, fullPath, [typeColumn, idColumn, column]);
                 return qb.get();
             });
             const relatedCollection = new Collection<any>();
@@ -1628,10 +1727,9 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                     continue;
                 }
                 const ids = list.map((inst: any) => inst[idColumn]);
-                const cb = this.withCallbacks && this.withCallbacks[fullPath];
                 const relatedInstances = await this.getInBatches(ids, async (chunk) => {
                     const qb = (ModelCtor as any).query().whereIn('id', chunk);
-                    if (cb) cb(qb);
+                    this.applyEagerConstraints(qb, fullPath, ['id']);
                     return qb.get();
                 });
                 const relatedCollection = new Collection<any>();
@@ -1677,8 +1775,6 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             const parentIds = instances.map(inst => inst[localKey]).filter((id: any) => id !== null && id !== undefined);
             if (parentIds.length === 0) return;
 
-            const cb = this.withCallbacks && this.withCallbacks[fullPath];
-
             // Query: SELECT related.*, through.firstKey as __through_fk FROM related
             //        JOIN through ON related.secondKey = through.secondLocalKey
             //        WHERE through.firstKey IN (parentIds)
@@ -1688,7 +1784,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                     .addSelect(`${throughTable}.${firstKey} as __through_fk`)
                     .join(throughTable, `${relatedTable}.${secondKey}`, '=', `${throughTable}.${secondLocalKey}`)
                     .whereIn(`${throughTable}.${firstKey}`, chunk);
-                if (cb) cb(qb);
+                this.applyEagerConstraints(qb, fullPath, [`${relatedTable}.*`, `${throughTable}.${firstKey} as __through_fk`]);
                 return qb.get();
             });
 
@@ -1760,8 +1856,6 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             const relatedKey = config.relatedKey || 'id';
             const parentIds = instances.map(inst => inst[parentKey]).filter((id: any) => id !== null && id !== undefined);
             if (parentIds.length === 0) return;
-            const cb = this.withCallbacks && this.withCallbacks[fullPath];
-
             // Expose pivot columns if requested via child query builder
             const columns = this.pivotConfig?.columns ? Array.from(this.pivotConfig.columns) : [];
             const alias = this.pivotConfig?.alias || 'pivot';
@@ -1779,7 +1873,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                         qb.addSelect(`${pivotTable}.${col} AS ${alias}__${col}`);
                     }
                 }
-                if (cb) cb(qb);
+                this.applyEagerConstraints(qb, fullPath, [`${relatedTable}.*`, `${pivotTable}.${fpk} as __pivot_fk`]);
                 return qb.get();
             });
             const relatedCollection = new Collection<any>();
@@ -1999,6 +2093,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         }
         this.ensureReadOnlySql(sql, 'get');
         const [rows] = await connection.query(sql, allParams);
+        const casts = this.getModelCasts(rows as Record<string, any>[]);
         const instances = (rows as any[]).map(row => {
             const instance = new (this.model as any)() as InstanceType<M>;
             // Extract pivot data if requested
@@ -2021,7 +2116,6 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             const data = schema ? schema.parse(row) : row;
 
             // Apply model accessors/mutators if available
-            const casts = (this.model as any).casts;
             if (casts) {
                 for (const [key, castType] of Object.entries(casts)) {
                     if (key in data) {
@@ -2145,6 +2239,7 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
         }
 
         // Create model instances
+        const casts = this.getModelCasts(rows);
         const instances = rows.map(row => {
             const instance = new (this.model as any)() as InstanceType<M>;
 
@@ -2153,7 +2248,6 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
             const data = schema ? schema.parse(row) : row;
 
             // Apply model casts if available
-            const casts = (this.model as any).casts;
             if (casts) {
                 for (const [key, castType] of Object.entries(casts)) {
                     if (key in (data as any)) {
@@ -2501,6 +2595,13 @@ class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith extends st
                     }
                 }
 
+                if (typeof prop === 'string') {
+                    const readHelper = (Eloquent as any).getReadHelper(prop);
+                    if (readHelper) {
+                        return (...args: any[]) => readHelper(target, ...args);
+                    }
+                }
+
                 return (target as any)[prop];
             }
         });
@@ -2651,6 +2752,7 @@ class Eloquent {
     static connectionStorage = new AsyncLocalStorage<EloquentRequestContext>();
     private static connectionFactory = createConnection;
     private static registeredMorphMap: Record<string, typeof Eloquent> = {};
+    private static readHelpers: Record<string, (model: Eloquent, ...args: any[]) => any> = {};
     private static readonly requestContextSymbol = Symbol.for('eloquent.requestContext');
 
     private static resolveOptions(options?: EloquentOptions): ResolvedEloquentOptions {
@@ -3055,6 +3157,27 @@ class Eloquent {
 
     static disableDebug(): void {
         Eloquent.debugEnabled = false;
+    }
+
+    static registerReadHelper(name: string, helper: (model: Eloquent, ...args: any[]) => any): void {
+        if (!name || typeof helper !== 'function') {
+            throw new Error('registerReadHelper requires a helper name and function');
+        }
+        Eloquent.readHelpers[name] = helper;
+    }
+
+    static registerReadHelpers(helpers: Record<string, (model: Eloquent, ...args: any[]) => any>): void {
+        for (const [name, helper] of Object.entries(helpers)) {
+            Eloquent.registerReadHelper(name, helper);
+        }
+    }
+
+    static clearReadHelpers(): void {
+        Eloquent.readHelpers = {};
+    }
+
+    private static getReadHelper(name: string): ((model: Eloquent, ...args: any[]) => any) | undefined {
+        return Eloquent.readHelpers[name];
     }
 
     static raw(value: string): string {
@@ -3561,7 +3684,18 @@ class Eloquent {
             qb.with(defaultWith);
         }
 
-        return qb;
+        return new Proxy(qb, {
+            get(target, prop, receiver) {
+                if (typeof prop === 'string' && !(prop in target)) {
+                    const scopeName = `scope${prop.charAt(0).toUpperCase()}${prop.slice(1)}`;
+                    const scope = (target as any).model?.[scopeName];
+                    if (typeof scope === 'function') {
+                        return (...args: any[]) => scope.call((target as any).model, target, ...args);
+                    }
+                }
+                return Reflect.get(target, prop, receiver);
+            },
+        });
     }
 
     static schema?: z.ZodTypeAny;

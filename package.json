@@ -49,6 +49,7 @@
         "clean": "rimraf dist",
         "dev": "tsup --watch",
         "check-types": "tsc --noEmit",
+        "test:fetch-surface": "node tests/fetch-only-surface-scan.mjs",
         "prepublishOnly": "npm run clean && npm run build"
     },
     "peerDependencies": {

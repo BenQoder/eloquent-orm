@@ -51,7 +51,12 @@ declare abstract class Relation<TRelated extends Eloquent = Eloquent> {
     /**
      * Add a where clause to the query
      */
-    where(column: string, operatorOrValue?: any, value?: any): this;
+    where(column: string | Record<string, any> | ((query: QueryBuilder<any>) => void), operatorOrValue?: any, value?: any): this;
+    orWhere(column: string | Record<string, any> | ((query: QueryBuilder<any>) => void), operatorOrValue?: any, value?: any): this;
+    whereColumn(first: string, operatorOrSecond: string, second?: string): this;
+    orWhereColumn(first: string, operatorOrSecond: string, second?: string): this;
+    whereKey(id: any | any[]): this;
+    whereKeyNot(id: any | any[]): this;
     /**
      * Add a where in clause to the query
      */
@@ -60,6 +65,8 @@ declare abstract class Relation<TRelated extends Eloquent = Eloquent> {
      * Add a where not in clause to the query
      */
     whereNotIn(column: string, values: any[]): this;
+    orWhereIn(column: string, values: any[]): this;
+    orWhereNotIn(column: string, values: any[]): this;
     /**
      * Add a where null clause to the query
      */
@@ -68,14 +75,38 @@ declare abstract class Relation<TRelated extends Eloquent = Eloquent> {
      * Add a where not null clause to the query
      */
     whereNotNull(column: string): this;
+    orWhereNull(column: string): this;
+    orWhereNotNull(column: string): this;
+    whereBetween(column: string, values: [any, any]): this;
+    whereNotBetween(column: string, values: [any, any]): this;
+    orWhereBetween(column: string, values: [any, any]): this;
+    orWhereNotBetween(column: string, values: [any, any]): this;
+    whereDate(column: string, operatorOrValue: string, value?: string): this;
+    whereMonth(column: string, operatorOrValue: string | number, value?: string | number): this;
+    whereYear(column: string, operatorOrValue: string | number, value?: string | number): this;
+    whereDay(column: string, operatorOrValue: string | number, value?: string | number): this;
+    whereTime(column: string, operatorOrValue: string, value?: string): this;
     /**
      * Add a raw where clause to the query
      */
     whereRaw(sql: string, bindings?: any[]): this;
+    orWhereRaw(sql: string, bindings?: any[]): this;
+    whereHas(relation: string, callback?: (query: QueryBuilder) => void, operator?: string, count?: number): this;
+    orWhereHas(relation: string, callback?: (query: QueryBuilder) => void, operator?: string, count?: number): this;
+    whereDoesntHave(relation: string, callback?: (query: QueryBuilder) => void): this;
+    with(relations: string | string[] | Record<string, string[] | ((query: QueryBuilder<any>) => void)>): this;
+    withCount(relations: string | string[] | Record<string, (query: QueryBuilder) => void>): this;
+    withSum(relations: string | string[] | Record<string, (query: QueryBuilder) => void>, column: string): this;
+    withAvg(relations: string | string[] | Record<string, (query: QueryBuilder) => void>, column: string): this;
+    withMin(relations: string | string[] | Record<string, (query: QueryBuilder) => void>, column: string): this;
+    withMax(relations: string | string[] | Record<string, (query: QueryBuilder) => void>, column: string): this;
     /**
      * Add an order by clause to the query
      */
     orderBy(column: string, direction?: 'asc' | 'desc'): this;
+    orderByDesc(column: string): this;
+    latest(column?: string): this;
+    oldest(column?: string): this;
     /**
      * Limit the number of results
      */
@@ -88,6 +119,8 @@ declare abstract class Relation<TRelated extends Eloquent = Eloquent> {
      * Select specific columns
      */
     select(...columns: string[]): this;
+    addSelect(...columns: string[]): this;
+    scope(name: string, ...args: any[]): this;
     /**
      * Execute the query and get all results
      */
@@ -96,10 +129,17 @@ declare abstract class Relation<TRelated extends Eloquent = Eloquent> {
      * Execute the query and get the first result
      */
     first(): Promise<TRelated | null>;
+    firstOrFail(): Promise<TRelated>;
     /**
      * Get the count of related records
      */
     count(): Promise<number>;
+    sum(column: string): Promise<number>;
+    avg(column: string): Promise<number>;
+    min(column: string): Promise<number>;
+    max(column: string): Promise<number>;
+    value(column: string): Promise<any>;
+    pluck(column: string, key?: string): Promise<any>;
     /**
      * Check if any related records exist
      */
@@ -621,11 +661,13 @@ declare class QueryBuilder<M extends typeof Eloquent = typeof Eloquent, TWith ex
     clone(): QueryBuilder<M, TWith>;
     private chunkArray;
     private getInBatches;
+    private applyEagerConstraints;
     private setPivotSource;
     as(alias: string): this;
     withPivot(...columns: string[]): this;
     scope(name: string, ...args: any[]): this;
     private applyCast;
+    private getModelCasts;
     loadRelations(instances: any[], relations: string[], model?: typeof Eloquent, prefix?: string): Promise<void>;
     private loadSingleRelation;
     chunk(size: number, callback: (results: any[]) => Promise<void> | void): Promise<void>;
@@ -732,6 +774,7 @@ declare class Eloquent {
     static connectionStorage: AsyncLocalStorage<EloquentRequestContext>;
     private static connectionFactory;
     private static registeredMorphMap;
+    private static readHelpers;
     private static readonly requestContextSymbol;
     private static resolveOptions;
     private static getActiveOptions;
@@ -799,6 +842,10 @@ declare class Eloquent {
     static isAutomaticallyEagerLoadRelationshipsEnabled(): boolean;
     static enableDebug(logger?: (message: string, data?: any) => void): void;
     static disableDebug(): void;
+    static registerReadHelper(name: string, helper: (model: Eloquent, ...args: any[]) => any): void;
+    static registerReadHelpers(helpers: Record<string, (model: Eloquent, ...args: any[]) => any>): void;
+    static clearReadHelpers(): void;
+    private static getReadHelper;
     static raw(value: string): string;
     private static getLoadBatch;
     private static getLoadingPromises;

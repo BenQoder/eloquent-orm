@@ -51,6 +51,26 @@ var init_Relation = __esm({
         this.query.where(column, operatorOrValue, value);
         return this;
       }
+      orWhere(column, operatorOrValue, value) {
+        this.query.orWhere(column, operatorOrValue, value);
+        return this;
+      }
+      whereColumn(first, operatorOrSecond, second) {
+        this.query.whereColumn(first, operatorOrSecond, second);
+        return this;
+      }
+      orWhereColumn(first, operatorOrSecond, second) {
+        this.query.orWhereColumn(first, operatorOrSecond, second);
+        return this;
+      }
+      whereKey(id) {
+        this.query.whereKey(id);
+        return this;
+      }
+      whereKeyNot(id) {
+        this.query.whereKeyNot(id);
+        return this;
+      }
       /**
        * Add a where in clause to the query
        */
@@ -63,6 +83,14 @@ var init_Relation = __esm({
        */
       whereNotIn(column, values) {
         this.query.whereNotIn(column, values);
+        return this;
+      }
+      orWhereIn(column, values) {
+        this.query.orWhereIn(column, values);
+        return this;
+      }
+      orWhereNotIn(column, values) {
+        this.query.orWhereNotIn(column, values);
         return this;
       }
       /**
@@ -79,6 +107,50 @@ var init_Relation = __esm({
         this.query.whereNotNull(column);
         return this;
       }
+      orWhereNull(column) {
+        this.query.orWhereNull(column);
+        return this;
+      }
+      orWhereNotNull(column) {
+        this.query.orWhereNotNull(column);
+        return this;
+      }
+      whereBetween(column, values) {
+        this.query.whereBetween(column, values);
+        return this;
+      }
+      whereNotBetween(column, values) {
+        this.query.whereNotBetween(column, values);
+        return this;
+      }
+      orWhereBetween(column, values) {
+        this.query.orWhereBetween(column, values);
+        return this;
+      }
+      orWhereNotBetween(column, values) {
+        this.query.orWhereNotBetween(column, values);
+        return this;
+      }
+      whereDate(column, operatorOrValue, value) {
+        this.query.whereDate(column, operatorOrValue, value);
+        return this;
+      }
+      whereMonth(column, operatorOrValue, value) {
+        this.query.whereMonth(column, operatorOrValue, value);
+        return this;
+      }
+      whereYear(column, operatorOrValue, value) {
+        this.query.whereYear(column, operatorOrValue, value);
+        return this;
+      }
+      whereDay(column, operatorOrValue, value) {
+        this.query.whereDay(column, operatorOrValue, value);
+        return this;
+      }
+      whereTime(column, operatorOrValue, value) {
+        this.query.whereTime(column, operatorOrValue, value);
+        return this;
+      }
       /**
        * Add a raw where clause to the query
        */
@@ -86,11 +158,63 @@ var init_Relation = __esm({
         this.query.whereRaw(sql, bindings);
         return this;
       }
+      orWhereRaw(sql, bindings) {
+        this.query.orWhereRaw(sql, bindings);
+        return this;
+      }
+      whereHas(relation, callback, operator, count) {
+        this.query.whereHas(relation, callback, operator, count);
+        return this;
+      }
+      orWhereHas(relation, callback, operator, count) {
+        this.query.orWhereHas(relation, callback, operator, count);
+        return this;
+      }
+      whereDoesntHave(relation, callback) {
+        this.query.whereDoesntHave(relation, callback);
+        return this;
+      }
+      with(relations) {
+        this.query.with(relations);
+        return this;
+      }
+      withCount(relations) {
+        this.query.withCount(relations);
+        return this;
+      }
+      withSum(relations, column) {
+        this.query.withSum(relations, column);
+        return this;
+      }
+      withAvg(relations, column) {
+        this.query.withAvg(relations, column);
+        return this;
+      }
+      withMin(relations, column) {
+        this.query.withMin(relations, column);
+        return this;
+      }
+      withMax(relations, column) {
+        this.query.withMax(relations, column);
+        return this;
+      }
       /**
        * Add an order by clause to the query
        */
       orderBy(column, direction = "asc") {
         this.query.orderBy(column, direction);
+        return this;
+      }
+      orderByDesc(column) {
+        this.query.orderByDesc(column);
+        return this;
+      }
+      latest(column = "created_at") {
+        this.query.latest(column);
+        return this;
+      }
+      oldest(column = "created_at") {
+        this.query.oldest(column);
         return this;
       }
       /**
@@ -114,6 +238,14 @@ var init_Relation = __esm({
         this.query.select(...columns);
         return this;
       }
+      addSelect(...columns) {
+        this.query.addSelect(...columns);
+        return this;
+      }
+      scope(name, ...args) {
+        this.query.scope(name, ...args);
+        return this;
+      }
       // ============================================================================
       // Query Execution Methods
       // ============================================================================
@@ -129,11 +261,32 @@ var init_Relation = __esm({
       async first() {
         return this.query.first();
       }
+      async firstOrFail() {
+        return this.query.firstOrFail();
+      }
       /**
        * Get the count of related records
        */
       async count() {
         return this.query.count();
+      }
+      async sum(column) {
+        return this.query.sum(column);
+      }
+      async avg(column) {
+        return this.query.avg(column);
+      }
+      async min(column) {
+        return this.query.min(column);
+      }
+      async max(column) {
+        return this.query.max(column);
+      }
+      async value(column) {
+        return this.query.value(column);
+      }
+      async pluck(column, key) {
+        return this.query.pluck(column, key);
       }
       /**
        * Check if any related records exist
@@ -1550,11 +1703,35 @@ var init_Eloquent = __esm({
         return { sql, params: exists.params };
       }
       buildHasSubquery(relationName, callback, isCount = false) {
+        var _a;
         const cfg = Eloquent.getRelationConfig(this.model, relationName);
         if (!cfg) {
           throw new Error(`Relationship '${relationName}' does not exist on model ${this.model.name}`);
         }
         const parentTable = this.resolveTableName(this.model, this.tableName);
+        if (cfg.type === "morphTo") {
+          const name = cfg.morphName;
+          const typeColumn = cfg.typeColumn || `${name}_type`;
+          const idColumn = cfg.idColumn || `${name}_id`;
+          const morphMap = ((_a = Eloquent.getMorphMap) == null ? void 0 : _a.call(Eloquent)) ?? {};
+          const morphEntries = Object.entries(morphMap);
+          if (morphEntries.length === 0) {
+            return { sql: "SELECT 1 WHERE 0=1", params: [] };
+          }
+          const params2 = [];
+          const morphParts = [];
+          for (const [morphType, ModelCtor] of morphEntries) {
+            const targetTable = this.resolveTableName(ModelCtor);
+            const targetQB = ModelCtor.query();
+            if (callback) callback(targetQB);
+            const targetConditions = targetQB.conditions ? JSON.parse(JSON.stringify(targetQB.conditions)) : [];
+            const targetWhere = this.buildWhereClause(targetConditions);
+            const targetWhereSql = targetWhere.sql ? ` AND ${targetWhere.sql}` : "";
+            morphParts.push(`(${parentTable}.${typeColumn} = ? AND EXISTS (SELECT 1 FROM ${targetTable} WHERE ${targetTable}.id = ${parentTable}.${idColumn}${targetWhereSql}))`);
+            params2.push(morphType, ...targetWhere.params);
+          }
+          return { sql: `SELECT 1 WHERE ${morphParts.join(" OR ")}`, params: params2 };
+        }
         const RelatedModel = typeof cfg.model === "string" ? Eloquent.getModelForMorphType(cfg.model) : cfg.model;
         const relatedTable = this.resolveTableName(RelatedModel);
         const relQB = RelatedModel.query();
@@ -1577,7 +1754,7 @@ var init_Eloquent = __esm({
           const foreignKey = cfg.foreignKey;
           const ownerKey = cfg.ownerKey || "id";
           parts.push(`${relatedTable}.${ownerKey} = ${parentTable}.${foreignKey}`);
-        } else if (cfg.type === "morphMany" || cfg.type === "morphOne") {
+        } else if (cfg.type === "morphMany" || cfg.type === "morphOne" || cfg.type === "morphOneOfMany") {
           const name = cfg.morphName;
           const typeColumn = cfg.typeColumn || `${name}_type`;
           const idColumn = cfg.idColumn || `${name}_id`;
@@ -1586,6 +1763,21 @@ var init_Eloquent = __esm({
           parts.push(`${relatedTable}.${idColumn} = ${parentTable}.${localKey}`);
           parts.push(`${relatedTable}.${typeColumn} IN (${morphTypes.map(() => "?").join(", ")})`);
           params.push(...morphTypes);
+        } else if (cfg.type === "hasManyThrough" || cfg.type === "hasOneThrough") {
+          const ThroughModel = typeof cfg.through === "string" ? Eloquent.getModelForMorphType(cfg.through) : cfg.through;
+          if (!ThroughModel) {
+            throw new Error(`Through model '${cfg.through}' not found in morph map`);
+          }
+          const throughTable = this.resolveTableName(ThroughModel);
+          const firstKey = cfg.firstKey || `${this.model.name.toLowerCase()}_id`;
+          const secondKey = cfg.secondKey || `${ThroughModel.name.toLowerCase()}_id`;
+          const localKey = cfg.localKey || "id";
+          const secondLocalKey = cfg.secondLocalKey || "id";
+          const join = `FROM ${relatedTable} JOIN ${throughTable} ON ${relatedTable}.${secondKey} = ${throughTable}.${secondLocalKey}`;
+          const link = `${throughTable}.${firstKey} = ${parentTable}.${localKey}`;
+          const whereSql2 = where.sql ? ` AND ${where.sql}` : "";
+          const sql2 = `SELECT 1 ${join} WHERE ${link}${whereSql2}`;
+          return { sql: sql2, params: [...where.params] };
         } else if (cfg.type === "belongsToMany") {
           const pivotTable = this.prefixTableWithDatabase(
             cfg.table || [this.model.name.toLowerCase(), RelatedModel.name.toLowerCase()].sort().join("_")
@@ -1781,6 +1973,17 @@ var init_Eloquent = __esm({
         }
         return all;
       }
+      applyEagerConstraints(query, fullPath, requiredColumns = []) {
+        var _a, _b;
+        const columns = (_a = this.withColumns) == null ? void 0 : _a[fullPath];
+        if (columns && columns.length > 0) {
+          query.select(...Array.from(/* @__PURE__ */ new Set([...requiredColumns, ...columns])));
+        }
+        const callback = (_b = this.withCallbacks) == null ? void 0 : _b[fullPath];
+        if (callback) {
+          callback(query);
+        }
+      }
       // BelongsToMany helpers
       setPivotSource(table, alias = "pivot") {
         if (!this.pivotConfig) this.pivotConfig = { table: this.prefixTableWithDatabase(table), alias, columns: /* @__PURE__ */ new Set() };
@@ -1822,17 +2025,59 @@ var init_Eloquent = __esm({
             return parseFloat(value);
           case "boolean":
           case "bool":
+            if (typeof value === "string") {
+              return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+            }
             return Boolean(value);
           case "string":
             return String(value);
+          case "date":
           case "datetime":
+          case "timestamp":
             return new Date(value);
           case "array":
           case "json":
-            return typeof value === "string" ? JSON.parse(value) : value;
+          case "object":
+            if (typeof value !== "string") return value;
+            try {
+              return JSON.parse(value);
+            } catch {
+              return value;
+            }
           default:
             return value;
         }
+      }
+      getModelCasts(rows) {
+        const explicit = this.model.casts;
+        if (explicit) {
+          return explicit;
+        }
+        if (!this.model.inferCasts) {
+          return void 0;
+        }
+        const sample = rows == null ? void 0 : rows.find((row) => row && typeof row === "object");
+        if (!sample) {
+          return void 0;
+        }
+        const inferred = {};
+        for (const [key, value] of Object.entries(sample)) {
+          if (value === null || value === void 0 || typeof value !== "string") {
+            continue;
+          }
+          if (/^(true|false)$/i.test(value) || /^(0|1)$/.test(value) && /(^is_|^has_|enabled$|active$|published$|visible$)/i.test(key)) {
+            inferred[key] = "boolean";
+          } else if (/^-?\d+$/.test(value)) {
+            inferred[key] = "integer";
+          } else if (/^-?\d+\.\d+$/.test(value)) {
+            inferred[key] = "float";
+          } else if (value.startsWith("{") && value.endsWith("}") || value.startsWith("[") && value.endsWith("]")) {
+            inferred[key] = "json";
+          } else if (/(^|_)(at|date|time)$/.test(key) && !Number.isNaN(Date.parse(value))) {
+            inferred[key] = "datetime";
+          }
+        }
+        return Object.keys(inferred).length > 0 ? inferred : void 0;
       }
       async loadRelations(instances, relations, model, prefix) {
         if (!relations || relations.length === 0) return;
@@ -1916,10 +2161,9 @@ var init_Eloquent = __esm({
           const ownerKey = config.ownerKey || "id";
           const foreignKeys = instances.map((inst) => inst[foreignKey]).filter((id) => id !== null && id !== void 0);
           if (foreignKeys.length === 0) return;
-          const cb = this.withCallbacks && this.withCallbacks[fullPath];
           const relatedInstances = await this.getInBatches(foreignKeys, async (chunk) => {
             const qb = RelatedModel.query().whereIn(ownerKey, chunk);
-            if (cb) cb(qb);
+            this.applyEagerConstraints(qb, fullPath, [ownerKey]);
             return qb.get();
           });
           const relatedCollection = new Collection();
@@ -1952,10 +2196,9 @@ var init_Eloquent = __esm({
           const localKey = config.localKey || "id";
           const localKeys = instances.map((inst) => inst[localKey]).filter((id) => id !== null && id !== void 0);
           if (localKeys.length === 0) return;
-          const cb = this.withCallbacks && this.withCallbacks[fullPath];
           const relatedInstances = await this.getInBatches(localKeys, async (chunk) => {
             const qb = RelatedModel.query().whereIn(foreignKey, chunk);
-            if (cb) cb(qb);
+            this.applyEagerConstraints(qb, fullPath, [foreignKey]);
             return qb.get();
           });
           const relatedCollection = new Collection();
@@ -1992,10 +2235,9 @@ var init_Eloquent = __esm({
           const localKey = config.localKey || "id";
           const localKeys = instances.map((inst) => inst[localKey]).filter((id) => id !== null && id !== void 0);
           if (localKeys.length === 0) return;
-          const cb = this.withCallbacks && this.withCallbacks[fullPath];
           const relatedInstances = await this.getInBatches(localKeys, async (chunk) => {
             const qb = RelatedModel.query().whereIn(foreignKey, chunk);
-            if (cb) cb(qb);
+            this.applyEagerConstraints(qb, fullPath, [foreignKey]);
             return qb.get();
           });
           const relatedCollection = new Collection();
@@ -2031,10 +2273,9 @@ var init_Eloquent = __esm({
           const localKeys = instances.map((inst) => inst[localKey]).filter((id) => id !== null && id !== void 0);
           if (localKeys.length === 0) return;
           const morphTypes = Eloquent.getPossibleMorphTypesForModel(model);
-          const cb = this.withCallbacks && this.withCallbacks[fullPath];
           const relatedInstances = await this.getInBatches(localKeys, async (chunk) => {
             const qb = RelatedModel.query().whereIn(typeColumn, morphTypes).whereIn(idColumn, chunk);
-            if (cb) cb(qb);
+            this.applyEagerConstraints(qb, fullPath, [typeColumn, idColumn]);
             return qb.get();
           });
           const relatedCollection = new Collection();
@@ -2070,10 +2311,9 @@ var init_Eloquent = __esm({
           const localKeys = instances.map((inst) => inst[localKey]).filter((id) => id !== null && id !== void 0);
           if (localKeys.length === 0) return;
           const morphTypes = Eloquent.getPossibleMorphTypesForModel(model);
-          const cb = this.withCallbacks && this.withCallbacks[fullPath];
           const relatedInstances = await this.getInBatches(localKeys, async (chunk) => {
             const qb = RelatedModel.query().whereIn(typeColumn, morphTypes).whereIn(idColumn, chunk);
-            if (cb) cb(qb);
+            this.applyEagerConstraints(qb, fullPath, [typeColumn, idColumn]);
             return qb.get();
           });
           const relatedCollection = new Collection();
@@ -2113,7 +2353,6 @@ var init_Eloquent = __esm({
           if (localKeys.length === 0) return;
           const morphTypes = Eloquent.getPossibleMorphTypesForModel(model);
           const relatedTable = this.resolveTableName(RelatedModel);
-          const cb = this.withCallbacks && this.withCallbacks[fullPath];
           const relatedInstances = await this.getInBatches(localKeys, async (chunk) => {
             const aggFn = aggregate === "max" ? "MAX" : "MIN";
             const qb = RelatedModel.query().whereIn(typeColumn, morphTypes).whereIn(idColumn, chunk).whereRaw(`${relatedTable}.${column} = (
@@ -2121,7 +2360,7 @@ var init_Eloquent = __esm({
                         WHERE sub.${typeColumn} = ${relatedTable}.${typeColumn}
                         AND sub.${idColumn} = ${relatedTable}.${idColumn}
                     )`);
-            if (cb) cb(qb);
+            this.applyEagerConstraints(qb, fullPath, [typeColumn, idColumn, column]);
             return qb.get();
           });
           const relatedCollection = new Collection();
@@ -2175,10 +2414,9 @@ var init_Eloquent = __esm({
               continue;
             }
             const ids = list.map((inst) => inst[idColumn]);
-            const cb = this.withCallbacks && this.withCallbacks[fullPath];
             const relatedInstances = await this.getInBatches(ids, async (chunk) => {
               const qb = ModelCtor.query().whereIn("id", chunk);
-              if (cb) cb(qb);
+              this.applyEagerConstraints(qb, fullPath, ["id"]);
               return qb.get();
             });
             const relatedCollection = new Collection();
@@ -2219,10 +2457,9 @@ var init_Eloquent = __esm({
           const secondLocalKey = config.secondLocalKey || "id";
           const parentIds = instances.map((inst) => inst[localKey]).filter((id) => id !== null && id !== void 0);
           if (parentIds.length === 0) return;
-          const cb = this.withCallbacks && this.withCallbacks[fullPath];
           const rows = await this.getInBatches(parentIds, async (chunk) => {
             const qb = RelatedModel.query().addSelect(`${relatedTable}.*`).addSelect(`${throughTable}.${firstKey} as __through_fk`).join(throughTable, `${relatedTable}.${secondKey}`, "=", `${throughTable}.${secondLocalKey}`).whereIn(`${throughTable}.${firstKey}`, chunk);
-            if (cb) cb(qb);
+            this.applyEagerConstraints(qb, fullPath, [`${relatedTable}.*`, `${throughTable}.${firstKey} as __through_fk`]);
             return qb.get();
           });
           const relatedCollection = new Collection();
@@ -2294,7 +2531,6 @@ var init_Eloquent = __esm({
           const relatedKey = config.relatedKey || "id";
           const parentIds = instances.map((inst) => inst[parentKey]).filter((id) => id !== null && id !== void 0);
           if (parentIds.length === 0) return;
-          const cb = this.withCallbacks && this.withCallbacks[fullPath];
           const columns = ((_a = this.pivotConfig) == null ? void 0 : _a.columns) ? Array.from(this.pivotConfig.columns) : [];
           const alias = ((_b = this.pivotConfig) == null ? void 0 : _b.alias) || "pivot";
           const rows = await this.getInBatches(parentIds, async (chunk) => {
@@ -2306,7 +2542,7 @@ var init_Eloquent = __esm({
                 qb.addSelect(`${pivotTable}.${col} AS ${alias}__${col}`);
               }
             }
-            if (cb) cb(qb);
+            this.applyEagerConstraints(qb, fullPath, [`${relatedTable}.*`, `${pivotTable}.${fpk} as __pivot_fk`]);
             return qb.get();
           });
           const relatedCollection = new Collection();
@@ -2500,6 +2736,7 @@ var init_Eloquent = __esm({
         }
         this.ensureReadOnlySql(sql, "get");
         const [rows] = await connection.query(sql, allParams);
+        const casts = this.getModelCasts(rows);
         const instances = rows.map((row) => {
           const instance = new this.model();
           if (this.pivotConfig) {
@@ -2518,7 +2755,6 @@ var init_Eloquent = __esm({
           }
           const schema = this.model.schema;
           const data = schema ? schema.parse(row) : row;
-          const casts = this.model.casts;
           if (casts) {
             for (const [key, castType] of Object.entries(casts)) {
               if (key in data) {
@@ -2613,11 +2849,11 @@ var init_Eloquent = __esm({
             return selected;
           });
         }
+        const casts = this.getModelCasts(rows);
         const instances = rows.map((row) => {
           const instance = new this.model();
           const schema = this.model.schema;
           const data = schema ? schema.parse(row) : row;
-          const casts = this.model.casts;
           if (casts) {
             for (const [key, castType] of Object.entries(casts)) {
               if (key in data) {
@@ -2904,6 +3140,12 @@ var init_Eloquent = __esm({
               const accessor = findAccessor(prop);
               if (accessor) {
                 return target[accessor]();
+              }
+            }
+            if (typeof prop === "string") {
+              const readHelper = Eloquent.getReadHelper(prop);
+              if (readHelper) {
+                return (...args) => readHelper(target, ...args);
               }
             }
             return target[prop];
@@ -3310,6 +3552,23 @@ var init_Eloquent = __esm({
       static disableDebug() {
         _Eloquent.debugEnabled = false;
       }
+      static registerReadHelper(name, helper) {
+        if (!name || typeof helper !== "function") {
+          throw new Error("registerReadHelper requires a helper name and function");
+        }
+        _Eloquent.readHelpers[name] = helper;
+      }
+      static registerReadHelpers(helpers) {
+        for (const [name, helper] of Object.entries(helpers)) {
+          _Eloquent.registerReadHelper(name, helper);
+        }
+      }
+      static clearReadHelpers() {
+        _Eloquent.readHelpers = {};
+      }
+      static getReadHelper(name) {
+        return _Eloquent.readHelpers[name];
+      }
       static raw(value) {
         return value;
       }
@@ -3685,7 +3944,19 @@ var init_Eloquent = __esm({
         if (defaultWith && Array.isArray(defaultWith) && defaultWith.length > 0) {
           qb.with(defaultWith);
         }
-        return qb;
+        return new Proxy(qb, {
+          get(target, prop, receiver) {
+            var _a;
+            if (typeof prop === "string" && !(prop in target)) {
+              const scopeName = `scope${prop.charAt(0).toUpperCase()}${prop.slice(1)}`;
+              const scope = (_a = target.model) == null ? void 0 : _a[scopeName];
+              if (typeof scope === "function") {
+                return (...args) => scope.call(target.model, target, ...args);
+              }
+            }
+            return Reflect.get(target, prop, receiver);
+          }
+        });
       }
       toJSON() {
         const hidden = this.constructor.hidden || [];
@@ -3881,6 +4152,7 @@ var init_Eloquent = __esm({
     _Eloquent.connectionStorage = new AsyncLocalStorage();
     _Eloquent.connectionFactory = createConnection2;
     _Eloquent.registeredMorphMap = {};
+    _Eloquent.readHelpers = {};
     _Eloquent.requestContextSymbol = /* @__PURE__ */ Symbol.for("eloquent.requestContext");
     // Debug logging
     _Eloquent.debugEnabled = false;
